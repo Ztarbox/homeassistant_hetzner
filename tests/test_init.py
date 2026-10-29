@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 from unittest.mock import patch
 
@@ -331,14 +330,14 @@ async def test_options_change_user_unit_override(
     assert state.attributes["unit_of_measurement"] == "MB"
 
 
-async def test_options_change_renames_legacy_ids_and_logs_conflicts(
+async def test_options_change_renames_legacy_ids_and_removes_conflicts(
     hass: HomeAssistant,
     aioclient_mock: AiohttpClientMocker,
     config_entry: MockConfigEntry,
     storage_box: dict[str, Any],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Legacy ids are renamed by the listener; rename conflicts are logged."""
+    """Legacy ids are renamed; stale entities holding a target id are removed."""
     _mock_box(aioclient_mock, storage_box)
     await _setup(hass, config_entry)
     registry = er.async_get(hass)
@@ -346,7 +345,7 @@ async def test_options_change_renames_legacy_ids_and_logs_conflicts(
 
     # Legacy id that can be renamed
     legacy_ok = _register(hass, f"{other}_used", config_entry)
-    # Legacy id whose target is taken (target already in the new unit)
+    # Legacy id whose target is taken by a stale entity of the same entry
     legacy_conflict = _register(hass, f"{other}_total", config_entry)
     taken_legacy = _register(hass, f"{other}_total_tb", config_entry)
     # Current-format id whose target is taken by an unrelated entity
@@ -356,7 +355,6 @@ async def test_options_change_renames_legacy_ids_and_logs_conflicts(
     location = _register(hass, f"{other}_location", config_entry)
     foreign = _register(hass, "foreign_unique_id", config_entry)
 
-    caplog.set_level(logging.ERROR)
     hass.config_entries.async_update_entry(config_entry, options={CONF_UNIT: "TB"})
     await hass.async_block_till_done()
 
@@ -367,20 +365,25 @@ async def test_options_change_renames_legacy_ids_and_logs_conflicts(
         return None if reg is None else reg.unique_id
 
     assert uid(legacy_ok.entity_id) == f"{other}_used_tb"
-    assert uid(legacy_conflict.entity_id) == f"{other}_total"
-    assert uid(taken_legacy.entity_id) == f"{other}_total_tb"
-    assert uid(free_id) == f"{PREFIX}_free_gb"
-    assert uid(taken_current.entity_id) == f"{PREFIX}_free_tb"
+    assert uid(legacy_conflict.entity_id) == f"{other}_total_tb"
+    assert uid(taken_legacy.entity_id) is None
+    assert uid(free_id) == f"{PREFIX}_free_tb"
+    assert uid(taken_current.entity_id) is None
     assert uid(location.entity_id) == f"{other}_location"
     assert uid(foreign.entity_id) == "foreign_unique_id"
-    assert "Could not rename legacy" in caplog.text
-    assert f"Could not rename {free_id}" in caplog.text
+    assert f"Removing conflicting stale entity {taken_legacy.entity_id}" in caplog.text
+    assert f"Removing conflicting stale entity {taken_current.entity_id}" in caplog.text
 
-    # Options were still updated for every size entity, renamed or not
     for entity_id in (legacy_ok.entity_id, legacy_conflict.entity_id, free_id):
         reg = registry.async_get(entity_id)
         assert reg is not None
         assert reg.options["sensor.private"]["suggested_unit_of_measurement"] == "TB"
+
+    # The renamed entity keeps its entity_id and receives the platform's state
+    state = hass.states.get(free_id)
+    assert state is not None
+    assert state.state == "0.7"
+    assert state.attributes["unit_of_measurement"] == "TB"
 
 
 async def test_safe_update_unique_id_same_id_noop(

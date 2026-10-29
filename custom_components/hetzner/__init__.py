@@ -157,51 +157,28 @@ async def _async_update_listener(
         if not unique_id.startswith(f"{DOMAIN}_storage_box_"):
             continue
 
+        # Removed as a stale conflict while renaming an earlier entry
+        if entity_registry.async_get(entry.entity_id) is None:
+            continue
+
         parts = unique_id.split("_")
 
         # Current format: hetzner_storage_box_<id>_<metric>_<unit>
         if len(parts) >= 6 and parts[-2] in SIZE_METRICS and parts[-1] in VALID_UNITS:
-            current_unit = parts[-1].lower()
-
-            if current_unit != new_unit.lower():
-                new_unique_id = "_".join(parts[:-1] + [new_unit.lower()])
-
-                try:
-                    entity_registry.async_update_entity(
-                        entry.entity_id,
-                        new_unique_id=new_unique_id,
-                    )
-                except ValueError as err:
-                    _LOGGER.error(
-                        "Could not rename %s from %s to %s: %s",
-                        entry.entity_id,
-                        unique_id,
-                        new_unique_id,
-                        err,
-                    )
-
-            _update_sensor_unit_options(entity_registry, entry.entity_id, new_unit)
+            new_unique_id = "_".join(parts[:-1] + [new_unit.lower()])
+        # Legacy format: hetzner_storage_box_<id>_<metric>
+        elif len(parts) >= 5 and parts[-1] in SIZE_METRICS:
+            new_unique_id = f"{unique_id}_{new_unit.lower()}"
+        else:
             continue
 
-        # Legacy format: hetzner_storage_box_<id>_<metric>
-        if len(parts) >= 5 and parts[-1] in SIZE_METRICS:
-            new_unique_id = f"{unique_id}_{new_unit.lower()}"
-
-            try:
-                entity_registry.async_update_entity(
-                    entry.entity_id,
-                    new_unique_id=new_unique_id,
-                )
-            except ValueError as err:
-                _LOGGER.error(
-                    "Could not rename legacy %s from %s to %s: %s",
-                    entry.entity_id,
-                    unique_id,
-                    new_unique_id,
-                    err,
-                )
-
-            _update_sensor_unit_options(entity_registry, entry.entity_id, new_unit)
+        await _safe_update_unique_id(
+            hass=hass,
+            entity_registry=entity_registry,
+            entity_entry=entry,
+            new_unique_id=new_unique_id,
+        )
+        _update_sensor_unit_options(entity_registry, entry.entity_id, new_unit)
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][config_entry.entry_id] = {
