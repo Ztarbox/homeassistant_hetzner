@@ -115,7 +115,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     ).lower()
 
     _LOGGER.debug(
-        "Migrating config entry %s with version %s to version 2",
+        "Migrating config entry %s with version %s to version 3",
         config_entry.entry_id,
         config_entry.version,
     )
