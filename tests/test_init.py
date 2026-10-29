@@ -16,7 +16,11 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import (  # type: i
     AiohttpClientMocker,
 )
 
-from custom_components.hetzner import _safe_update_unique_id, async_unload_entry
+from custom_components.hetzner import (
+    _safe_update_unique_id,
+    async_migrate_entry,
+    async_unload_entry,
+)
 from custom_components.hetzner.const import (
     CONF_API_KEY,
     CONF_HOST,
@@ -236,20 +240,45 @@ async def test_migrate_v1_removes_conflicting_stale_entity(
     assert entry.version == 3
 
 
-async def test_migrate_v2_entry_is_not_bumped(
+async def test_migrate_v2_entry_bumped_without_renaming(
     hass: HomeAssistant,
     aioclient_mock: AiohttpClientMocker,
     storage_box: dict[str, Any],
 ) -> None:
-    """A v2 entry sets up but is neither migrated nor bumped (current behavior)."""
+    """A v2 entry is bumped to v3 once and its unique_ids are left alone."""
     _mock_box(aioclient_mock, storage_box)
     entry = _make_entry(hass, 2, unit="GB")
+    reg = _register(hass, f"{PREFIX}_total_gb", entry)
 
-    await _setup(hass, entry)
+    with patch(
+        "custom_components.hetzner.async_migrate_entry",
+        wraps=async_migrate_entry,
+    ) as migrate:
+        await _setup(hass, entry)
+        assert await hass.config_entries.async_reload(entry.entry_id)
+        await hass.async_block_till_done()
 
     assert entry.state is ConfigEntryState.LOADED
-    # Suspected bug: version stays 2, so migration runs again on every startup
-    assert entry.version == 2
+    assert entry.version == 3
+    assert migrate.call_count == 1
+    updated = er.async_get(hass).async_get(reg.entity_id)
+    assert updated is not None
+    assert updated.unique_id == f"{PREFIX}_total_gb"
+
+
+async def test_migrate_current_entry_is_noop(
+    hass: HomeAssistant, config_entry: MockConfigEntry
+) -> None:
+    """Migrating an entry that is already v3 changes nothing."""
+    reg = _register(hass, f"{PREFIX}_total", config_entry)
+
+    with patch.object(hass.config_entries, "async_update_entry") as update:
+        assert await async_migrate_entry(hass, config_entry)
+
+    update.assert_not_called()
+    updated = er.async_get(hass).async_get(reg.entity_id)
+    assert updated is not None
+    assert updated.unique_id == f"{PREFIX}_total"
 
 
 async def test_options_change_renames_and_reloads(

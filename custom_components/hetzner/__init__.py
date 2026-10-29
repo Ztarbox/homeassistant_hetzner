@@ -136,6 +136,8 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
                     new_unique_id=new_unique_id,
                 )
 
+    # Version 2 entries already use unit-suffixed unique_ids
+    if config_entry.version < 3:
         hass.config_entries.async_update_entry(config_entry, version=3)
 
     return True
