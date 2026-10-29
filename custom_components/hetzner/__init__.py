@@ -156,7 +156,19 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
 async def _async_update_listener(
     hass: HomeAssistant, config_entry: ConfigEntry
 ) -> None:
-    """Reload so setup renames the size sensor unique_ids to the new unit."""
+    """Reload when the unit changed; setup renames the size sensor unique_ids."""
+    new_unit = config_entry.options.get(
+        CONF_UNIT,
+        config_entry.data.get(CONF_UNIT, DEFAULT_UNIT),
+    )
+    loaded_unit = (
+        hass.data.get(DOMAIN, {}).get(config_entry.entry_id, {}).get(CONF_UNIT)
+    )
+
+    # HA also calls the listener for title or system option changes
+    if loaded_unit is not None and new_unit.upper() == loaded_unit.upper():
+        return
+
     await hass.config_entries.async_reload(config_entry.entry_id)
 
 

@@ -385,6 +385,40 @@ async def test_options_change_without_user_override(
     assert reg.options.get("sensor") == sensor_options
 
 
+async def test_entry_update_without_unit_change_keeps_user_unit(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    storage_box: dict[str, Any],
+) -> None:
+    """Renaming the entry or toggling polling neither reloads nor resets units."""
+    _mock_box(aioclient_mock, storage_box)
+    await _setup(hass, config_entry)
+    registry = er.async_get(hass)
+    entity_id = _size_entities(hass, config_entry)["total"].entity_id
+    registry.async_update_entity_options(
+        entity_id, "sensor", {"unit_of_measurement": "MB"}
+    )
+    await hass.async_block_till_done()
+
+    with patch.object(hass.config_entries, "async_reload") as reload:
+        hass.config_entries.async_update_entry(config_entry, title="Renamed")
+        await hass.async_block_till_done()
+        hass.config_entries.async_update_entry(config_entry, pref_disable_polling=True)
+        await hass.async_block_till_done()
+        hass.config_entries.async_update_entry(config_entry, options={CONF_UNIT: "GB"})
+        await hass.async_block_till_done()
+
+    reload.assert_not_called()
+    reg = registry.async_get(entity_id)
+    assert reg is not None
+    assert reg.unique_id == f"{PREFIX}_total_gb"
+    assert reg.options["sensor"]["unit_of_measurement"] == "MB"
+    state = hass.states.get(entity_id)
+    assert state is not None
+    assert state.attributes["unit_of_measurement"] == "MB"
+
+
 async def test_unit_change_during_setup_retry_reuses_entities(
     hass: HomeAssistant,
     aioclient_mock: AiohttpClientMocker,

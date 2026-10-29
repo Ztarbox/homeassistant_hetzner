@@ -31,7 +31,7 @@ Size sensors embed the unit in their unique_id: `hetzner_storage_box_<id>_<metri
 
 - `async_migrate_entry` appends the unit to legacy unique_ids and bumps the entry to version 3 (config flow `VERSION` must stay in step with this).
 - `_async_align_size_unique_ids` runs on every `async_setup_entry` (so a unit changed while the entry waits for a setup retry is still applied): it renames size-sensor unique_ids whose unit differs, updates the registry's `suggested_unit_of_measurement` and clears user unit overrides (`_update_sensor_unit_options`) for those only.
-- `_async_update_listener` (fires on options change) reloads the entry so setup applies the new unit.
+- `_async_update_listener` only reloads the entry when the unit actually changed; HA also fires it for title or system option changes.
 - `_safe_update_unique_id` removes a conflicting stale registry entity before renaming.
 
 Unique_ids are parsed by splitting on `_`, so changing the ID format or metric names requires updating `SIZE_METRICS`/`VALID_UNITS` and the parsing in `__init__.py`.
