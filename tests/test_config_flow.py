@@ -35,6 +35,7 @@ from custom_components.hetzner.const import (
 from tests.conftest import API_KEY, LIST_URL, STORAGE_BOX_ID
 
 BOX_DESCRIPTION = f"backup (ID: {STORAGE_BOX_ID}, Status: active, Type: bx11, BX11)"
+BOX_OPTION = {"value": STORAGE_BOX_ID, "label": BOX_DESCRIPTION}
 
 
 def _queue_list_responses(
@@ -149,13 +150,13 @@ async def test_full_flow_creates_entry(
     assert result["step_id"] == "storage_box"
     assert result["errors"] == {}
     selector = _schema(result)[CONF_STORAGE_BOX_ID]
-    assert selector.config["options"] == [BOX_DESCRIPTION]
+    assert selector.config["options"] == [BOX_OPTION]
     _, _, _, headers = aioclient_mock.mock_calls[0]
     assert headers == {"Authorization": f"Bearer {API_KEY}"}
 
     with patch("custom_components.hetzner.async_setup_entry", return_value=True):
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {CONF_STORAGE_BOX_ID: BOX_DESCRIPTION}
+            result["flow_id"], {CONF_STORAGE_BOX_ID: STORAGE_BOX_ID}
         )
         await hass.async_block_till_done()
 
@@ -187,9 +188,38 @@ async def test_storage_box_step_lists_multiple_boxes(
 
     selector = _schema(result)[CONF_STORAGE_BOX_ID]
     assert selector.config["options"] == [
-        BOX_DESCRIPTION,
-        "other (ID: 42, Status: initializing, Type: None, None)",
+        BOX_OPTION,
+        {
+            "value": "42",
+            "label": "other (ID: 42, Status: initializing, Type: None, None)",
+        },
     ]
+
+
+async def test_storage_box_step_box_changed_before_submit(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    storage_box: dict[str, Any],
+) -> None:
+    """Test a box whose status changes before submitting can still be selected."""
+    changed = {**storage_box, "status": "locked"}
+    _queue_list_responses(
+        aioclient_mock,
+        _list_payload(storage_box),
+        _list_payload(storage_box),
+        _list_payload(changed),
+    )
+
+    result = await _start_flow(hass)
+    result = await _submit_key(hass, result["flow_id"])
+    with patch("custom_components.hetzner.async_setup_entry", return_value=True):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_STORAGE_BOX_ID: STORAGE_BOX_ID}
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_STORAGE_BOX_ID] == STORAGE_BOX_ID
 
 
 @pytest.mark.parametrize(
@@ -240,7 +270,7 @@ async def test_storage_box_step_invalid_selection(
     assert result["step_id"] == "storage_box"
     assert result["errors"] == {"base": "invalid_selection"}
     selector = _schema(result)[CONF_STORAGE_BOX_ID]
-    assert selector.config["options"] == [BOX_DESCRIPTION]
+    assert selector.config["options"] == [BOX_OPTION]
 
 
 async def test_storage_box_step_already_configured(
@@ -255,7 +285,7 @@ async def test_storage_box_step_already_configured(
     result = await _start_flow(hass)
     result = await _submit_key(hass, result["flow_id"])
     result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {CONF_STORAGE_BOX_ID: BOX_DESCRIPTION}
+        result["flow_id"], {CONF_STORAGE_BOX_ID: STORAGE_BOX_ID}
     )
 
     assert result["type"] is FlowResultType.ABORT
@@ -345,7 +375,7 @@ async def test_user_step_unit_defaults(
     )
     with patch("custom_components.hetzner.async_setup_entry", return_value=True):
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {CONF_STORAGE_BOX_ID: BOX_DESCRIPTION}
+            result["flow_id"], {CONF_STORAGE_BOX_ID: STORAGE_BOX_ID}
         )
         await hass.async_block_till_done()
 

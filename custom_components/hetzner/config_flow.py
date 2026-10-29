@@ -39,16 +39,18 @@ DATA_SCHEMA = vol.Schema(
 STORAGE_BOX_SELECT_FIELD = CONF_STORAGE_BOX_ID
 
 
-def create_storage_box_schema(descriptions_list: list) -> vol.Schema:
+def create_storage_box_schema(
+    box_options: list[selector.SelectOptionDict],
+) -> vol.Schema:
     """Create schema with available storage boxes as options using selector.
 
     Args:
-        descriptions_list: List of formatted descriptions for each storage box
+        box_options: Storage box IDs as values with formatted descriptions as labels
     """
     return vol.Schema(
         {
             vol.Required(STORAGE_BOX_SELECT_FIELD): selector.SelectSelector(
-                selector.SelectSelectorConfig(options=descriptions_list)
+                selector.SelectSelectorConfig(options=box_options)
             )
         }
     )
@@ -163,20 +165,24 @@ class HetznerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             _LOGGER.error(f"Error validating API key: {e}")
             return "validation_error"
 
-    async def _build_description_map(self, storage_boxes: dict) -> dict:
-        """Build a mapping of formatted descriptions to storage box IDs.
+    def _build_box_options(
+        self, storage_boxes: dict
+    ) -> list[selector.SelectOptionDict]:
+        """Build dropdown options for the storage boxes.
 
         Args:
             storage_boxes: Dict mapping box ID to box info
 
         Returns:
-            Dict mapping formatted description strings to box IDs
+            Options with the box ID as value and a formatted description as label
         """
-        descriptions_to_ids = {}
-        for box_id, box_info in storage_boxes.items():
-            desc = f"{box_info['name']} (ID: {box_id}, Status: {box_info['status']}, Type: {box_info['box_type']}, {box_info['description']})"
-            descriptions_to_ids[desc] = box_id
-        return descriptions_to_ids
+        return [
+            selector.SelectOptionDict(
+                value=box_id,
+                label=f"{box_info['name']} (ID: {box_id}, Status: {box_info['status']}, Type: {box_info['box_type']}, {box_info['description']})",
+            )
+            for box_id, box_info in storage_boxes.items()
+        ]
 
     async def _fetch_storage_boxes(self, api_key: str, host: str) -> dict:
         """Fetch list of available storage boxes from Hetzner API.
@@ -242,14 +248,12 @@ class HetznerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
 
         if user_input is not None:
-            # user_input[STORAGE_BOX_SELECT_FIELD] is the formatted description string
-            selected_description = user_input.get(STORAGE_BOX_SELECT_FIELD)
-            # Map description back to ID
-            descriptions_to_ids = await self._build_description_map(storage_boxes)
-            selected_box_id = descriptions_to_ids.get(selected_description)
+            # The dropdown submits the box ID, which stays stable while the
+            # box's status or name may change between showing and submitting
+            selected_box_id = user_input.get(STORAGE_BOX_SELECT_FIELD)
+            selected_box = storage_boxes.get(selected_box_id)
 
-            if selected_box_id:
-                selected_box = storage_boxes.get(selected_box_id)
+            if selected_box:
                 # Set unique ID for the config entry (storage box id) to allow single instance per box
                 await self.async_set_unique_id(selected_box_id)
                 self._abort_if_unique_id_configured()
@@ -266,12 +270,10 @@ class HetznerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 errors["base"] = "invalid_selection"
 
-        # Build mapping of descriptions to IDs for dropdown
-        descriptions_to_ids = await self._build_description_map(storage_boxes)
-        descriptions_list = list(descriptions_to_ids.keys())
-
         return self.async_show_form(
             step_id="storage_box",
-            data_schema=create_storage_box_schema(descriptions_list),
+            data_schema=create_storage_box_schema(
+                self._build_box_options(storage_boxes)
+            ),
             errors=errors,
         )
