@@ -33,12 +33,9 @@ async def async_setup_entry(
 ) -> None:
     """Set up sensors for Hetzner Storage Box using the entry's coordinator."""
     entry_data = hass.data[DOMAIN][config_entry.entry_id]
-    storage_box_id = config_entry.data.get(CONF_STORAGE_BOX_ID)
+    # Presence checked in __init__.async_setup_entry
+    storage_box_id = config_entry.data[CONF_STORAGE_BOX_ID]
     display_unit = entry_data.get(CONF_UNIT, DEFAULT_UNIT)
-
-    if storage_box_id is None:
-        _LOGGER.error("No storage box id in config entry")
-        return
 
     # Already refreshed in __init__.async_setup_entry
     coordinator = entry_data[DATA_COORDINATOR]

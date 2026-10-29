@@ -475,12 +475,13 @@ async def test_missing_storage_box_id(
     aioclient_mock: AiohttpClientMocker,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Without a storage box id no entities are created and an error is logged."""
+    """Without a storage box id setup fails, logs an error and adds no entities."""
     entry = _make_entry(hass, **{CONF_STORAGE_BOX_ID: None})
     with caplog.at_level(logging.ERROR):
         await _setup(hass, entry)
 
-    assert entry.state is ConfigEntryState.LOADED
+    assert entry.state is ConfigEntryState.SETUP_ERROR
+    assert entry.entry_id not in hass.data.get(DOMAIN, {})
     assert "No storage box id in config entry" in caplog.text
     assert aioclient_mock.call_count == 0
     assert hass.states.async_entity_ids("sensor") == []

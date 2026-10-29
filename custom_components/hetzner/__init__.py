@@ -66,18 +66,21 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     }
 
     storage_box_id = config_entry.data.get(CONF_STORAGE_BOX_ID)
-    if storage_box_id is not None:
-        coordinator = HetznerDataUpdateCoordinator(
-            hass,
-            config_entry,
-            entry_data[CONF_API_KEY],
-            entry_data[CONF_HOST],
-            storage_box_id,
-        )
-        # Refresh here rather than in the platform: HA only turns
-        # ConfigEntryNotReady into a setup retry when raised from setup_entry
-        await coordinator.async_config_entry_first_refresh()
-        entry_data[DATA_COORDINATOR] = coordinator
+    if storage_box_id is None:
+        _LOGGER.error("No storage box id in config entry")
+        return False
+
+    coordinator = HetznerDataUpdateCoordinator(
+        hass,
+        config_entry,
+        entry_data[CONF_API_KEY],
+        entry_data[CONF_HOST],
+        storage_box_id,
+    )
+    # Refresh here rather than in the platform: HA only turns
+    # ConfigEntryNotReady into a setup retry when raised from setup_entry
+    await coordinator.async_config_entry_first_refresh()
+    entry_data[DATA_COORDINATOR] = coordinator
 
     hass.data[DOMAIN][config_entry.entry_id] = entry_data
 
