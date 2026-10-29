@@ -64,6 +64,21 @@
       },
       "zfs_snapshot_folder": {
         "name": "ZFS-snapshotmap (hoofdaccount)"
+      },
+      "subaccount_reachable_externally": {
+        "name": "Extern bereikbaar"
+      },
+      "subaccount_samba": {
+        "name": "Samba"
+      },
+      "subaccount_ssh": {
+        "name": "SSH"
+      },
+      "subaccount_webdav": {
+        "name": "WebDAV"
+      },
+      "readonly": {
+        "name": "Alleen-lezen"
       }
     },
     "sensor": {
@@ -91,6 +106,9 @@
       },
       "free_space": {
         "name": "Vrije ruimte"
+      },
+      "home_directory": {
+        "name": "Thuismap"
       }
     }
   },

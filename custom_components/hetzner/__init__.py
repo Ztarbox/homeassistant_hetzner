@@ -7,7 +7,11 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_API_KEY, CONF_HOST, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryError
-from homeassistant.helpers import entity_registry as er, issue_registry as ir
+from homeassistant.helpers import (
+    device_registry as dr,
+    entity_registry as er,
+    issue_registry as ir,
+)
 
 from .const import (
     CONF_STORAGE_BOX_ID,
@@ -24,7 +28,9 @@ from .coordinator import (
     HetznerConfigEntry,
     HetznerDataUpdateCoordinator,
     storage_box_not_found_issue_id,
+    subaccount_ids_of_device,
 )
+from .entity import storage_box_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -59,6 +65,13 @@ async def async_setup_entry(
 
     config_entry.runtime_data = coordinator
 
+    # Subaccount devices link to the box device by its registry id, so it has
+    # to exist before the platforms add their entities
+    dr.async_get(hass).async_get_or_create(
+        config_entry_id=config_entry.entry_id,
+        **storage_box_device_info(storage_box_id, coordinator.data.box),
+    )
+
     await hass.config_entries.async_forward_entry_setups(config_entry, PLATFORMS)
     return True
 
@@ -83,6 +96,29 @@ async def async_remove_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> 
     ir.async_delete_issue(
         hass, DOMAIN, storage_box_not_found_issue_id(config_entry.entry_id)
     )
+
+
+async def async_remove_config_entry_device(
+    hass: HomeAssistant,
+    config_entry: HetznerConfigEntry,
+    device_entry: dr.AnyDeviceEntry,
+) -> bool:
+    """Allow deleting the device of a subaccount the API no longer lists.
+
+    The storage box device stays as long as the entry exists. Subaccount
+    devices are normally removed by the coordinator already.
+    """
+    storage_box_id = config_entry.data.get(CONF_STORAGE_BOX_ID)
+    if storage_box_id is None:
+        return False
+    subaccount_ids = subaccount_ids_of_device(device_entry.identifiers, storage_box_id)
+    if not subaccount_ids:
+        return False
+    # Not loaded (e.g. waiting for a setup retry): nothing tells whether the
+    # subaccount still exists, but if it does, the next setup adds it again
+    if not hasattr(config_entry, "runtime_data"):
+        return True
+    return not subaccount_ids & set(config_entry.runtime_data.data.subaccounts)
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
@@ -129,14 +165,17 @@ def _size_unique_id(unique_id: str) -> str | None:
     """Return the unit-less unique_id of a size sensor, or None for others.
 
     Accepts hetzner_storage_box_<id>_<metric> (v1 and v5) and
-    hetzner_storage_box_<id>_<metric>_<unit> (v2 to v4).
+    hetzner_storage_box_<id>_<metric>_<unit> (v2 to v4). The part counts are
+    exact, so subaccount unique_ids
+    (hetzner_storage_box_<id>_subaccount_<sub_id>_<key>) never match, whatever
+    their key ends with.
     """
     if not unique_id.startswith(f"{DOMAIN}_storage_box_"):
         return None
     parts = unique_id.split("_")
-    if len(parts) >= 5 and parts[-1] in SIZE_METRICS:
+    if len(parts) == 5 and parts[-1] in SIZE_METRICS:
         return unique_id
-    if len(parts) >= 6 and parts[-2] in SIZE_METRICS and parts[-1] in LEGACY_UNITS:
+    if len(parts) == 6 and parts[-2] in SIZE_METRICS and parts[-1] in LEGACY_UNITS:
         return "_".join(parts[:-1])
     return None
 

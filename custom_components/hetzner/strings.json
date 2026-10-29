@@ -64,6 +64,21 @@
       },
       "zfs_snapshot_folder": {
         "name": "ZFS snapshot folder (main account)"
+      },
+      "subaccount_reachable_externally": {
+        "name": "Reachable externally"
+      },
+      "subaccount_samba": {
+        "name": "Samba"
+      },
+      "subaccount_ssh": {
+        "name": "SSH"
+      },
+      "subaccount_webdav": {
+        "name": "WebDAV"
+      },
+      "readonly": {
+        "name": "Read-only"
       }
     },
     "sensor": {
@@ -91,6 +106,9 @@
       },
       "free_space": {
         "name": "Free space"
+      },
+      "home_directory": {
+        "name": "Home directory"
       }
     }
   },

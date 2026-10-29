@@ -25,7 +25,7 @@ from yarl import URL
 from custom_components.hetzner.config_flow import HetznerConfigFlow
 from custom_components.hetzner.const import CONF_STORAGE_BOX_ID, DEFAULT_HOST, DOMAIN
 
-from tests.conftest import API_KEY, BOX_URL, LIST_URL, STORAGE_BOX_ID
+from tests.conftest import API_KEY, BOX_URL, LIST_URL, STORAGE_BOX_ID, SUBACCOUNTS_URL
 
 BOX_DESCRIPTION = f"backup (ID: {STORAGE_BOX_ID}, Status: active, Type: bx11, BX11)"
 BOX_OPTION = {"value": STORAGE_BOX_ID, "label": BOX_DESCRIPTION}
@@ -431,6 +431,7 @@ async def test_reauth_flow_loaded_entry_reloads_with_new_key(
 ) -> None:
     """Test reauth of a running entry reloads it with the new key."""
     aioclient_mock.get(BOX_URL, json={"storage_box": storage_box})
+    aioclient_mock.get(SUBACCOUNTS_URL, json={"subaccounts": []})
     assert await hass.config_entries.async_setup(config_entry.entry_id)
     await hass.async_block_till_done()
 
@@ -445,6 +446,7 @@ async def test_reauth_flow_loaded_entry_reloads_with_new_key(
 
     aioclient_mock.clear_requests()
     aioclient_mock.get(BOX_URL, json={"storage_box": storage_box})
+    aioclient_mock.get(SUBACCOUNTS_URL, json={"subaccounts": []})
     result = await hass.config_entries.flow.async_configure(
         flows[0]["flow_id"], {CONF_API_KEY: "new-key"}
     )
@@ -454,8 +456,9 @@ async def test_reauth_flow_loaded_entry_reloads_with_new_key(
     assert result["reason"] == "reauth_successful"
     assert config_entry.state is config_entries.ConfigEntryState.LOADED
     assert config_entry.runtime_data is not coordinator
-    # Reauth check plus the first refresh after the reload, both with the new key
-    assert aioclient_mock.call_count == 2
+    # Reauth check plus the first refresh after the reload (box and subaccounts),
+    # all with the new key
+    assert aioclient_mock.call_count == 3
     for _, _, _, headers in aioclient_mock.mock_calls:
         assert headers == {"Authorization": "Bearer new-key"}
     # HA warns when an entry with an update listener is reloaded by the flow
@@ -478,6 +481,7 @@ async def test_reauth_flow_failed_entry_set_up_with_new_key(
 
     aioclient_mock.clear_requests()
     aioclient_mock.get(BOX_URL, json={"storage_box": storage_box})
+    aioclient_mock.get(SUBACCOUNTS_URL, json={"subaccounts": []})
     result = await hass.config_entries.flow.async_configure(
         flows[0]["flow_id"], {CONF_API_KEY: "new-key"}
     )
@@ -486,7 +490,7 @@ async def test_reauth_flow_failed_entry_set_up_with_new_key(
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reauth_successful"
     assert config_entry.state is config_entries.ConfigEntryState.LOADED
-    assert config_entry.runtime_data.data == storage_box
+    assert config_entry.runtime_data.data.box == storage_box
 
 
 async def test_no_options_flow(

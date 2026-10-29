@@ -18,6 +18,8 @@ API_KEY = "test-api-key"
 STORAGE_BOX_ID = "123456"
 LIST_URL = f"https://{DEFAULT_HOST}/v1/storage_boxes"
 BOX_URL = f"{LIST_URL}/{STORAGE_BOX_ID}"
+SUBACCOUNTS_URL = f"{BOX_URL}/subaccounts"
+SUBACCOUNT_ID = "42"
 
 STORAGE_BOX: dict[str, Any] = {
     "id": int(STORAGE_BOX_ID),
@@ -57,6 +59,26 @@ STORAGE_BOX: dict[str, Any] = {
 }
 
 
+SUBACCOUNT: dict[str, Any] = {
+    "id": int(SUBACCOUNT_ID),
+    "storage_box": int(STORAGE_BOX_ID),
+    "name": "sub1",
+    "username": "u123456-sub1",
+    "server": "u123456-sub1.your-storagebox.de",
+    "home_directory": "backups/host01",
+    "description": "host01 backup",
+    "labels": {"environment": "prod"},
+    "created": "2025-02-22T00:02:00+00:00",
+    "access_settings": {
+        "reachable_externally": False,
+        "samba_enabled": True,
+        "ssh_enabled": True,
+        "webdav_enabled": False,
+        "readonly": True,
+    },
+}
+
+
 def pytest_configure(config: pytest.Config) -> None:
     """Map files to modules from the repo root when running ``--mypy``.
 
@@ -82,6 +104,12 @@ def auto_enable_custom_integrations(
 def storage_box() -> dict[str, Any]:
     """Return a fresh copy of a storage box API payload."""
     return copy.deepcopy(STORAGE_BOX)
+
+
+@pytest.fixture
+def subaccount() -> dict[str, Any]:
+    """Return a fresh copy of a subaccount API payload."""
+    return copy.deepcopy(SUBACCOUNT)
 
 
 @pytest.fixture

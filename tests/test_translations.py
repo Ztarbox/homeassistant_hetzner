@@ -13,6 +13,7 @@ import pytest
 from custom_components.hetzner.binary_sensor import (
     ACCESS_SETTINGS,
     OBJECT_ID_NAMES as BINARY_OBJECT_ID_NAMES,
+    SUBACCOUNT_ACCESS_SETTINGS,
 )
 from custom_components.hetzner.const import STORAGE_BOX_STATUSES
 from custom_components.hetzner.sensor import OBJECT_ID_NAMES, SIZE_TRANSLATION_KEYS
@@ -183,17 +184,25 @@ def test_object_id_names_match_english() -> None:
     assert OBJECT_ID_NAMES == {
         key: value["name"] for key, value in sensors.items() if "name" in value
     }
-    # Binary sensor names end with " (main account)"; the entity_ids leave it out
+    # Main account binary sensor names end with " (main account)"; the
+    # entity_ids leave it out. Subaccount ones have their own device
+    main_keys = {str(description.translation_key) for description in ACCESS_SETTINGS}
     binary_sensors = EN["entity"]["binary_sensor"]
     assert {
-        key: f"{name} (main account)" for key, name in BINARY_OBJECT_ID_NAMES.items()
+        key: f"{name} (main account)" if key in main_keys else name
+        for key, name in BINARY_OBJECT_ID_NAMES.items()
     } == {key: value["name"] for key, value in binary_sensors.items()}
+    for key in set(binary_sensors) - main_keys:
+        assert "main account" not in binary_sensors[key]["name"], key
 
 
 def test_binary_sensor_translations() -> None:
     """Every access setting binary sensor has a name and on/off icons."""
-    keys = {str(description.translation_key) for description in ACCESS_SETTINGS}
-    # One per access setting the API documents
+    keys = {
+        str(description.translation_key)
+        for description in ACCESS_SETTINGS + SUBACCOUNT_ACCESS_SETTINGS
+    }
+    # One per access setting the API documents for the box and for subaccounts
     assert {description.key for description in ACCESS_SETTINGS} == {
         "reachable_externally",
         "samba_enabled",
@@ -201,6 +210,15 @@ def test_binary_sensor_translations() -> None:
         "webdav_enabled",
         "zfs_enabled",
     }
+    assert {description.key for description in SUBACCOUNT_ACCESS_SETTINGS} == {
+        "reachable_externally",
+        "samba_enabled",
+        "ssh_enabled",
+        "webdav_enabled",
+        "readonly",
+    }
+    # Main account names say "(main account)", so subaccounts need their own keys
+    assert len(keys) == len(ACCESS_SETTINGS) + len(SUBACCOUNT_ACCESS_SETTINGS)
 
     binary_sensors = EN["entity"]["binary_sensor"]
     assert set(binary_sensors) == keys
@@ -230,3 +248,23 @@ def test_config_flow_errors_translated() -> None:
     assert "no_storage_boxes" in keys
     assert "api_error" in keys
     assert keys <= set(EN["config"]["error"])
+
+
+@pytest.mark.parametrize(
+    ("language", "readonly"),
+    [("en", "Read-only"), ("de", "Schreibgeschützt"), ("nl", "Alleen-lezen")],
+)
+def test_readonly_translation(language: str, readonly: str) -> None:
+    """The read-only state of a subaccount uses the established terms."""
+    data = _load(COMPONENT / "translations" / f"{language}.json")
+    assert data["entity"]["binary_sensor"]["readonly"]["name"] == readonly
+
+
+def test_readonly_icons() -> None:
+    """A read-only subaccount shows a closed lock, a writable one an open lock."""
+    icons = _load(COMPONENT / "icons.json")["entity"]
+    assert icons["binary_sensor"]["readonly"]["state"] == {
+        "on": "mdi:lock",
+        "off": "mdi:lock-open-variant",
+    }
+    assert icons["sensor"]["home_directory"] == {"default": "mdi:folder-home"}

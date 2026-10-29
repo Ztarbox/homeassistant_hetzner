@@ -25,7 +25,14 @@ from custom_components.hetzner.api import (
 )
 from custom_components.hetzner.const import DEFAULT_HOST
 
-from tests.conftest import API_KEY, BOX_URL, LIST_URL, STORAGE_BOX_ID
+from tests.conftest import (
+    API_KEY,
+    BOX_URL,
+    LIST_URL,
+    STORAGE_BOX_ID,
+    SUBACCOUNT,
+    SUBACCOUNTS_URL,
+)
 
 
 def _client(hass: HomeAssistant) -> HetznerClient:
@@ -82,6 +89,60 @@ async def test_get_storage_box_missing(
     aioclient_mock.get(BOX_URL, json=payload)
 
     assert await _client(hass).async_get_storage_box(STORAGE_BOX_ID) == {}
+
+
+async def test_list_subaccounts(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """All subaccounts come from one request below the box, without paging."""
+    other = {**SUBACCOUNT, "id": 43, "name": "sub2"}
+    aioclient_mock.get(SUBACCOUNTS_URL, json={"subaccounts": [SUBACCOUNT, other]})
+
+    assert await _client(hass).async_list_subaccounts(STORAGE_BOX_ID) == [
+        SUBACCOUNT,
+        other,
+    ]
+    assert aioclient_mock.call_count == 1
+    _, url, _, headers = aioclient_mock.mock_calls[0]
+    # No page or per_page parameter: the endpoint is not paginated
+    assert str(url) == SUBACCOUNTS_URL
+    assert headers == {"Authorization": f"Bearer {API_KEY}"}
+
+
+@pytest.mark.parametrize("payload", [{}, {"subaccounts": None}, {"subaccounts": []}])
+async def test_list_subaccounts_missing(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, payload: Any
+) -> None:
+    """A box without subaccounts is an empty list."""
+    aioclient_mock.get(SUBACCOUNTS_URL, json=payload)
+
+    assert await _client(hass).async_list_subaccounts(STORAGE_BOX_ID) == []
+
+
+@pytest.mark.parametrize(
+    ("response", "exc_type"),
+    [
+        ({"status": 401}, HetznerAuthError),
+        ({"status": 403, "json": _error_body("forbidden")}, HetznerAuthError),
+        ({"status": 403, "json": _error_body("maintenance")}, HetznerApiError),
+        ({"status": 404, "json": _error_body("not_found")}, HetznerNotFoundError),
+        ({"status": 500}, HetznerApiError),
+        ({"text": "not json"}, HetznerApiError),
+        ({"exc": asyncio.TimeoutError()}, HetznerTimeoutError),
+        ({"exc": aiohttp.ClientError("boom")}, HetznerConnectionError),
+    ],
+)
+async def test_list_subaccounts_errors(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    response: dict[str, Any],
+    exc_type: type[HetznerError],
+) -> None:
+    """Listing subaccounts maps errors like the other requests."""
+    aioclient_mock.get(SUBACCOUNTS_URL, **response)
+
+    with pytest.raises(exc_type):
+        await _client(hass).async_list_subaccounts(STORAGE_BOX_ID)
 
 
 @pytest.mark.parametrize(

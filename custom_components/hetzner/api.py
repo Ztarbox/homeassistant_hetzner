@@ -67,6 +67,15 @@ class HetznerClient:
         data = await self._async_get(f"storage_boxes/{storage_box_id}")
         return dict(data.get("storage_box") or {})
 
+    async def async_list_subaccounts(self, storage_box_id: str) -> list[dict[str, Any]]:
+        """Return all subaccounts of one storage box.
+
+        Unlike the storage box list, this endpoint has no page/per_page
+        parameters and no meta.pagination: one response holds all of them.
+        """
+        data = await self._async_get(f"storage_boxes/{storage_box_id}/subaccounts")
+        return list(data.get("subaccounts") or [])
+
     async def _async_get(self, path: str) -> dict[str, Any]:
         """GET a path below /v1 and return the decoded JSON object."""
         try:

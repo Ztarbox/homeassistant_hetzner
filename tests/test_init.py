@@ -32,7 +32,13 @@ from custom_components.hetzner.const import (
 )
 from custom_components.hetzner.coordinator import HetznerDataUpdateCoordinator
 
-from tests.conftest import API_KEY, BOX_URL, STORAGE_BOX, STORAGE_BOX_ID
+from tests.conftest import (
+    API_KEY,
+    BOX_URL,
+    STORAGE_BOX,
+    STORAGE_BOX_ID,
+    SUBACCOUNTS_URL,
+)
 
 PREFIX = f"{DOMAIN}_storage_box_{STORAGE_BOX_ID}"
 METRICS = list(SIZE_METRICS)
@@ -57,8 +63,9 @@ GIB_PRIVATE = {"suggested_unit_of_measurement": "GiB"}
 
 
 def _mock_box(aioclient_mock: AiohttpClientMocker, box: dict[str, Any]) -> None:
-    """Register the storage box API response."""
+    """Register the storage box API response, a box without subaccounts."""
     aioclient_mock.get(BOX_URL, json={"storage_box": box})
+    aioclient_mock.get(SUBACCOUNTS_URL, json={"subaccounts": []})
 
 
 def _make_entry(
@@ -136,7 +143,8 @@ async def test_setup_and_unload(
     assert isinstance(coordinator, HetznerDataUpdateCoordinator)
     assert coordinator.config_entry is not None
     assert coordinator.config_entry.entry_id == config_entry.entry_id
-    assert coordinator.data == storage_box
+    assert coordinator.data.box == storage_box
+    assert coordinator.data.subaccounts == {}
     _, url, _, headers = aioclient_mock.mock_calls[0]
     assert str(url).startswith(f"https://{DEFAULT_HOST}/")
     assert headers["Authorization"] == f"Bearer {API_KEY}"

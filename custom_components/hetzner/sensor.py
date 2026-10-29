@@ -6,7 +6,11 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.const import UnitOfInformation
+from homeassistant.const import (
+    MAX_LENGTH_STATE_STATE,
+    EntityCategory,
+    UnitOfInformation,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
@@ -18,7 +22,11 @@ from .const import (
     STORAGE_BOX_STATUSES,
 )
 from .coordinator import HetznerConfigEntry, HetznerDataUpdateCoordinator
-from .entity import HetznerEntity
+from .entity import (
+    HetznerEntity,
+    HetznerSubaccountEntity,
+    async_add_subaccount_entities,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,6 +51,7 @@ OBJECT_ID_NAMES = {
     "data_size": "Data size",
     "snapshot_size": "Snapshot size",
     "free_space": "Free space",
+    "home_directory": "Home directory",
 }
 
 
@@ -68,6 +77,15 @@ async def async_setup_entry(
 
     # No update_before_add: the coordinator already holds fresh data
     async_add_entities(entities)
+    async_add_subaccount_entities(
+        config_entry,
+        async_add_entities,
+        lambda subaccount_id: (
+            HetznerSubaccountHomeDirectorySensor(
+                coordinator, storage_box_id, subaccount_id
+            ),
+        ),
+    )
 
 
 class HetznerStatusSensor(HetznerEntity, SensorEntity):
@@ -89,7 +107,7 @@ class HetznerStatusSensor(HetznerEntity, SensorEntity):
 
     @property
     def native_value(self) -> str | None:
-        data = self.coordinator.data or {}
+        data = self._box
         status = data.get("status")
         if status is None or status in STORAGE_BOX_STATUSES:
             return status
@@ -104,7 +122,7 @@ class HetznerStatusSensor(HetznerEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        data = self.coordinator.data or {}
+        data = self._box
         s_type = data.get("storage_box_type") or {}
         return {
             "id": data.get("id"),
@@ -131,13 +149,13 @@ class HetznerLocationSensor(HetznerEntity, SensorEntity):
 
     @property
     def native_value(self) -> str | None:
-        data = self.coordinator.data or {}
+        data = self._box
         location = data.get("location") or {}
         return location.get("name")
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        data = self.coordinator.data or {}
+        data = self._box
         location = data.get("location") or {}
         return {
             "id": location.get("id"),
@@ -182,7 +200,7 @@ class HetznerSizeSensor(HetznerEntity, SensorEntity):
 
     @property
     def native_value(self) -> int:
-        data = self.coordinator.data or {}
+        data = self._box
         stats = data.get("stats") or {}
         sb = data.get("storage_box_type") or {}
 
@@ -201,3 +219,38 @@ class HetznerSizeSensor(HetznerEntity, SensorEntity):
             return snapshots
         # Free space, clamped to 0 to avoid negative values
         return max(0, total - data_size - snapshots)
+
+
+class HetznerSubaccountHomeDirectorySensor(HetznerSubaccountEntity, SensorEntity):
+    """Directory of the storage box a subaccount is limited to."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_translation_key = "home_directory"
+    _object_id_name = OBJECT_ID_NAMES["home_directory"]
+
+    def __init__(
+        self,
+        coordinator: HetznerDataUpdateCoordinator,
+        storage_box_id: str,
+        subaccount_id: str,
+    ) -> None:
+        super().__init__(coordinator, storage_box_id, subaccount_id, "home_directory")
+
+    @property
+    def native_value(self) -> str | None:
+        home_directory = self._subaccount.get("home_directory")
+        # The API allows 999 characters, a state 255; HA would log an error on
+        # every update and fall back to unknown anyway
+        if home_directory is None or len(str(home_directory)) > MAX_LENGTH_STATE_STATE:
+            return None
+        return str(home_directory)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        # What is needed to connect, and the subaccount's own description
+        subaccount = self._subaccount
+        return {
+            "username": subaccount.get("username"),
+            "server": subaccount.get("server"),
+            "description": subaccount.get("description"),
+        }

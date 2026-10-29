@@ -18,6 +18,7 @@
   - [Replacing the API Key](#replacing-the-api-key)
 - [Sensors and Attributes](#sensors-and-attributes)
 - [Binary Sensors](#binary-sensors)
+- [Subaccounts](#subaccounts)
 - [Update Interval](#update-interval)
 - [Troubleshooting](#troubleshooting)
   - [Storage Box Not Found](#storage-box-not-found)
@@ -31,7 +32,7 @@
 **Hetzner Storage Box**  
 
 Home Assistant custom component that exposes storage metrics for your [Hetzner Storage Box](https://www.hetzner.com/storage/storage-box/) via the official JSON API.  
-Track **total, used, free, data and snapshot sizes** as native data size sensors (shown in GiB by default, any other unit can be picked per sensor), plus a status sensor that shows the box state and enriches it with details such as type, creation date and server name. Also a `location` sensor is available to show details of where your data is stored, and binary sensors show which access methods (SSH, Samba, WebDAV, external reachability, ZFS snapshot folder) are enabled for the main account.
+Track **total, used, free, data and snapshot sizes** as native data size sensors (shown in GiB by default, any other unit can be picked per sensor), plus a status sensor that shows the box state and enriches it with details such as type, creation date and server name. Also a `location` sensor is available to show details of where your data is stored, and binary sensors show which access methods (SSH, Samba, WebDAV, external reachability, ZFS snapshot folder) are enabled for the main account. Each [subaccount](#subaccounts) of the box gets its own device with its access settings and home directory.
 Perfect for monitoring your off-site backup space and add it to dashboards, automations and long-term statistics.
 
 ## Installation
@@ -154,7 +155,7 @@ The integration provides the following sensors. Their names follow the Home Assi
 
 ## Binary Sensors
 
-One binary sensor per access setting of the Storage Box shows whether it is enabled (`on`) or disabled (`off`). These are the settings of the Storage Box's main account, so their names end with "(main account)" (the entity IDs leave this out). Subaccounts have their own access settings, which this version does not cover yet. The binary sensors are diagnostic entities, so they appear under **Diagnostic** on the device page. A setting the API does not report shows as unknown.
+One binary sensor per access setting of the Storage Box shows whether it is enabled (`on`) or disabled (`off`). These are the settings of the Storage Box's main account, so their names end with "(main account)" (the entity IDs leave this out). The access settings of subaccounts are covered by their own devices, see [Subaccounts](#subaccounts). The binary sensors are diagnostic entities, so they appear under **Diagnostic** on the device page. A setting the API does not report shows as unknown.
 
 | Entity ID | Shows whether |
 | --- | --- |
@@ -164,9 +165,26 @@ One binary sensor per access setting of the Storage Box shows whether it is enab
 | `binary_sensor.storage_box_<boxname>_reachable_externally` | The Storage Box is reachable from outside the Hetzner network |
 | `binary_sensor.storage_box_<boxname>_zfs_snapshot_folder` | The ZFS snapshot folder is visible |
 
+## Subaccounts
+
+Every subaccount of the Storage Box gets its own device, linked to the Storage Box device ("connected via"), with the model "Storage Box subaccount". It is named "Storage Box &lt;boxname&gt; &lt;subaccount name&gt;" (the username if the subaccount has no name), for example "Storage Box backup sub1". Including the box name keeps the entity IDs apart from those of the box and of subaccounts of other boxes.
+
+All subaccount entities are diagnostic entities. For a subaccount `sub1` of the box `backup`:
+
+| Entity ID | Shows |
+| --- | --- |
+| `binary_sensor.storage_box_backup_sub1_ssh` | SSH/SFTP access is enabled |
+| `binary_sensor.storage_box_backup_sub1_samba` | Samba/CIFS access is enabled |
+| `binary_sensor.storage_box_backup_sub1_webdav` | WebDAV access is enabled |
+| `binary_sensor.storage_box_backup_sub1_reachable_externally` | The subaccount is reachable from outside the Hetzner network |
+| `binary_sensor.storage_box_backup_sub1_read_only` | The subaccount has read-only access (`on`) |
+| `sensor.storage_box_backup_sub1_home_directory` | The directory the subaccount is limited to (unknown if longer than 255 characters); attributes `username`, `server` (FQDN to connect to) and `description` |
+
+Subaccounts are picked up automatically: one created in the Hetzner Console appears with the next update (within 10 minutes), and the device of a deleted subaccount is removed together with its entities. While the Hetzner API cannot be read, nothing is removed. A leftover subaccount device that the API no longer lists can also be deleted by hand on its device page; the Storage Box device itself cannot be deleted while the integration entry exists.
+
 ## Update Interval
 
-All sensors are automatically updated every 10 minutes to fetch the latest status of your Storage Box.
+All sensors are automatically updated every 10 minutes to fetch the latest status of your Storage Box. Each update makes two API requests (the Storage Box and its subaccounts), well within the default Hetzner API limit of 3,600 requests per hour and project.
 
 ## Troubleshooting
 

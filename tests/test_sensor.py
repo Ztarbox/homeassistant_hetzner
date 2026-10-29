@@ -42,9 +42,10 @@ from custom_components.hetzner.binary_sensor import (
     HetznerAccessSettingBinarySensor,
 )
 from custom_components.hetzner.const import CONF_STORAGE_BOX_ID, DEFAULT_HOST, DOMAIN
+from custom_components.hetzner.coordinator import StorageBoxData
 from custom_components.hetzner.sensor import SIZE_TRANSLATION_KEYS, HetznerSizeSensor
 
-from tests.conftest import API_KEY, BOX_URL, STORAGE_BOX_ID
+from tests.conftest import API_KEY, BOX_URL, STORAGE_BOX_ID, SUBACCOUNTS_URL
 
 PREFIX = "sensor.storage_box_backup"
 BINARY_PREFIX = "binary_sensor.storage_box_backup"
@@ -81,11 +82,15 @@ SIZE_ENTITIES = {
 
 
 def _mock_box(
-    aioclient_mock: AiohttpClientMocker, payload: Any, status: int = 200
+    aioclient_mock: AiohttpClientMocker,
+    payload: Any,
+    status: int = 200,
+    subaccounts: list[dict[str, Any]] | None = None,
 ) -> None:
-    """Register the storage box endpoint response."""
+    """Register the storage box endpoint responses, by default no subaccounts."""
     aioclient_mock.clear_requests()
     aioclient_mock.get(BOX_URL, json={"storage_box": payload}, status=status)
+    aioclient_mock.get(SUBACCOUNTS_URL, json={"subaccounts": subaccounts or []})
 
 
 def _make_entry(hass: HomeAssistant, **data: Any) -> MockConfigEntry:
@@ -130,8 +135,8 @@ async def test_entities_created(
     await _setup(hass, config_entry)
 
     assert config_entry.state is ConfigEntryState.LOADED
-    # Entities reuse the first refresh instead of fetching again
-    assert aioclient_mock.call_count == 1
+    # Entities reuse the first refresh (box and subaccounts) instead of fetching
+    assert aioclient_mock.call_count == 2
     assert aioclient_mock.mock_calls[0][3]["Authorization"] == f"Bearer {API_KEY}"
 
     ent_reg = er.async_get(hass)
@@ -466,6 +471,7 @@ async def test_missing_storage_box_key(
 ) -> None:
     """A response without a storage_box key is treated as empty."""
     aioclient_mock.get(BOX_URL, json={})
+    aioclient_mock.get(SUBACCOUNTS_URL, json={})
     await _setup(hass, config_entry)
 
     assert config_entry.state is ConfigEntryState.LOADED
@@ -855,7 +861,7 @@ async def test_unload_entry(
     """Unloading the entry removes its data and makes entities unavailable."""
     _mock_box(aioclient_mock, storage_box)
     await _setup(hass, config_entry)
-    assert config_entry.runtime_data.data == storage_box
+    assert config_entry.runtime_data.data.box == storage_box
 
     assert await hass.config_entries.async_unload(config_entry.entry_id)
     await hass.async_block_till_done()
@@ -876,7 +882,7 @@ def test_size_sensor_invalid_metric() -> None:
 def test_size_sensor_native_bytes() -> None:
     """Size sensors report the API's bytes as integers in bytes."""
     coordinator = MagicMock()
-    coordinator.data = {"storage_box_type": {"size": 2**40}}
+    coordinator.data = StorageBoxData(box={"storage_box_type": {"size": 2**40}})
     sensor = HetznerSizeSensor(coordinator, STORAGE_BOX_ID, "total")
     assert sensor.native_value == 2**40
     assert isinstance(sensor.native_value, int)
@@ -962,9 +968,10 @@ async def test_icons_cover_translation_keys(
     aioclient_mock: AiohttpClientMocker,
     config_entry: MockConfigEntry,
     storage_box: dict[str, Any],
+    subaccount: dict[str, Any],
 ) -> None:
     """icons.json has an icon for every entity translation key."""
-    _mock_box(aioclient_mock, storage_box)
+    _mock_box(aioclient_mock, storage_box, subaccounts=[subaccount])
     await _setup(hass, config_entry)
 
     all_icons = (await async_get_icons(hass, "entity", [DOMAIN]))[DOMAIN]
@@ -984,6 +991,7 @@ async def test_icons_cover_translation_keys(
         },
     }
     assert icons["location"] == {"default": "mdi:map-marker"}
+    assert icons["home_directory"] == {"default": "mdi:folder-home"}
     for key in SIZE_TRANSLATION_KEYS.values():
         assert icons[key] == {"default": "mdi:harddisk"}
     # Binary sensors switch their icon with the state
