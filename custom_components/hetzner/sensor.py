@@ -7,12 +7,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import (
-    CoordinatorEntity,
-    DataUpdateCoordinator,
-)
 
 from .const import (
     CONF_STORAGE_BOX_ID,
@@ -21,6 +16,8 @@ from .const import (
     DEFAULT_UNIT,
     DOMAIN,
 )
+from .coordinator import HetznerDataUpdateCoordinator
+from .entity import HetznerEntity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -56,32 +53,10 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class HetznerEntity(CoordinatorEntity, SensorEntity):
-    """Base entity grouping all sensors under one storage box device."""
-
-    _attr_has_entity_name = True
-
-    def __init__(self, coordinator: DataUpdateCoordinator, storage_box_id: str):
-        super().__init__(coordinator)
-        self._storage_box_id = storage_box_id
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        data = self.coordinator.data or {}
-        box_name = data.get("name") or self._storage_box_id
-        return DeviceInfo(
-            identifiers={(DOMAIN, str(self._storage_box_id))},
-            name=f"Storage Box {box_name}",
-            manufacturer="Hetzner",
-            model=(data.get("storage_box_type") or {}).get("name"),
-            configuration_url="https://console.hetzner.com",
-        )
-
-
-class HetznerStatusSensor(HetznerEntity):
+class HetznerStatusSensor(HetznerEntity, SensorEntity):
     """Sensor representing the storage box status and details."""
 
-    def __init__(self, coordinator: DataUpdateCoordinator, storage_box_id: str):
+    def __init__(self, coordinator: HetznerDataUpdateCoordinator, storage_box_id: str):
         super().__init__(coordinator, storage_box_id)
         self._attr_unique_id = f"{DOMAIN}_storage_box_{self._storage_box_id}"
         # Main feature of the device: entity takes the device name
@@ -111,10 +86,10 @@ class HetznerStatusSensor(HetznerEntity):
         }
 
 
-class HetznerLocationSensor(HetznerEntity):
+class HetznerLocationSensor(HetznerEntity, SensorEntity):
     """Sensor representing the storage box location."""
 
-    def __init__(self, coordinator: DataUpdateCoordinator, storage_box_id: str):
+    def __init__(self, coordinator: HetznerDataUpdateCoordinator, storage_box_id: str):
         super().__init__(coordinator, storage_box_id)
         self._attr_unique_id = f"{DOMAIN}_storage_box_{self._storage_box_id}_location"
         self._attr_name = "Location"
@@ -143,14 +118,14 @@ class HetznerLocationSensor(HetznerEntity):
         }
 
 
-class HetznerSizeSensor(HetznerEntity):
+class HetznerSizeSensor(HetznerEntity, SensorEntity):
     """Sensor for various storage size metrics."""
 
     VALID_TYPES = {"total", "used", "data", "snapshots", "free"}
 
     def __init__(
         self,
-        coordinator: DataUpdateCoordinator,
+        coordinator: HetznerDataUpdateCoordinator,
         storage_box_id: str,
         metric: str,
         display_unit: str,
@@ -222,10 +197,10 @@ class HetznerSizeSensor(HetznerEntity):
         return round(float(value) / factor, 2)
 
 
-class HetznerAccessOptionsSensor(HetznerEntity):
+class HetznerAccessOptionsSensor(HetznerEntity, SensorEntity):
     """Sensor that counts enabled access options and exposes each option as an attribute."""
 
-    def __init__(self, coordinator: DataUpdateCoordinator, storage_box_id: str):
+    def __init__(self, coordinator: HetznerDataUpdateCoordinator, storage_box_id: str):
         super().__init__(coordinator, storage_box_id)
         self._attr_unique_id = (
             f"{DOMAIN}_storage_box_{self._storage_box_id}_access_options"
