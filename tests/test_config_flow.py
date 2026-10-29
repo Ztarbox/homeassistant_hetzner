@@ -21,7 +21,6 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import (  # type: i
 )
 from yarl import URL
 
-from custom_components.hetzner.config_flow import HetznerConfigFlow
 from custom_components.hetzner.const import (
     CONF_API_KEY,
     CONF_HOST,
@@ -77,6 +76,31 @@ async def _submit_key(
     )
 
 
+async def _finish_after_error(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    flow_id: str,
+    storage_box: dict[str, Any],
+) -> None:
+    """Fix the API, resubmit the key, pick the box and expect a new entry."""
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(LIST_URL, **_list_payload(storage_box))
+
+    result = await _submit_key(hass, flow_id)
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "storage_box"
+    assert result["errors"] == {}
+
+    with patch("custom_components.hetzner.async_setup_entry", return_value=True):
+        result = await hass.config_entries.flow.async_configure(
+            flow_id, {CONF_STORAGE_BOX_ID: STORAGE_BOX_ID}
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["result"].unique_id == STORAGE_BOX_ID
+
+
 def _schema(result: ConfigFlowResult) -> dict[Any, Any]:
     """Return the schema dict of a form result."""
     data_schema = result["data_schema"]
@@ -95,7 +119,10 @@ async def test_user_step_shows_form(hass: HomeAssistant) -> None:
 
 @pytest.mark.parametrize("api_key", ["", "   "])
 async def test_user_step_api_key_required(
-    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, api_key: str
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    storage_box: dict[str, Any],
+    api_key: str,
 ) -> None:
     """Test an empty or whitespace API key is rejected without an API call."""
     result = await _start_flow(hass)
@@ -105,6 +132,8 @@ async def test_user_step_api_key_required(
     assert result["step_id"] == "user"
     assert result["errors"] == {CONF_API_KEY: "api_key_required"}
     assert aioclient_mock.call_count == 0
+
+    await _finish_after_error(hass, aioclient_mock, result["flow_id"], storage_box)
 
 
 @pytest.mark.parametrize(
@@ -121,6 +150,7 @@ async def test_user_step_api_key_required(
 async def test_user_step_validation_errors(
     hass: HomeAssistant,
     aioclient_mock: AiohttpClientMocker,
+    storage_box: dict[str, Any],
     response: dict[str, Any],
     error: str,
 ) -> None:
@@ -133,6 +163,8 @@ async def test_user_step_validation_errors(
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "user"
     assert result["errors"] == {CONF_API_KEY: error}
+
+    await _finish_after_error(hass, aioclient_mock, result["flow_id"], storage_box)
 
 
 async def test_full_flow_creates_entry(
@@ -256,10 +288,12 @@ async def test_storage_box_without_name_uses_id_in_title(
 async def test_storage_box_step_no_storage_boxes(
     hass: HomeAssistant,
     aioclient_mock: AiohttpClientMocker,
+    storage_box: dict[str, Any],
     list_response: dict[str, Any],
 ) -> None:
-    """Test a failed or empty box list shows the no_storage_boxes error."""
-    _queue_list_responses(aioclient_mock, {"json": {}}, list_response)
+    """Test a failed or empty box list shows an error until boxes are found."""
+    payload = _list_payload(storage_box)
+    _queue_list_responses(aioclient_mock, {"json": {}}, list_response, payload, payload)
 
     result = await _start_flow(hass)
     result = await _submit_key(hass, result["flow_id"])
@@ -269,29 +303,59 @@ async def test_storage_box_step_no_storage_boxes(
     assert result["errors"] == {"base": "no_storage_boxes"}
     assert _schema(result) == {}
 
+    # Submitting the empty form fetches the boxes again
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "storage_box"
+    assert result["errors"] == {}
+    assert _schema(result)[CONF_STORAGE_BOX_ID].config["options"] == [BOX_OPTION]
+
+    with patch("custom_components.hetzner.async_setup_entry", return_value=True):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_STORAGE_BOX_ID: STORAGE_BOX_ID}
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["result"].unique_id == STORAGE_BOX_ID
+
 
 async def test_storage_box_step_invalid_selection(
     hass: HomeAssistant,
     aioclient_mock: AiohttpClientMocker,
     storage_box: dict[str, Any],
 ) -> None:
-    """Test an unknown selection shows the invalid_selection error.
+    """Test a box removed before submitting shows invalid_selection.
 
-    The SelectSelector schema rejects unknown values before the step handler
-    runs when going through the flow manager, so the step is called directly.
+    The selector only accepts boxes of the shown form, so the error needs a
+    box that disappears between showing and submitting the form.
     """
-    aioclient_mock.get(LIST_URL, **_list_payload(storage_box))
-    flow = HetznerConfigFlow()
-    flow.hass = hass
-    flow.data = {CONF_API_KEY: API_KEY, CONF_HOST: DEFAULT_HOST, CONF_UNIT: "GB"}
+    other = {"id": 42, "name": "other", "status": "active"}
+    both = _list_payload(storage_box, other)
+    only_box = _list_payload(storage_box)
+    _queue_list_responses(aioclient_mock, both, both, only_box, only_box)
 
-    result = await flow.async_step_storage_box({CONF_STORAGE_BOX_ID: "nonexistent"})
+    result = await _start_flow(hass)
+    result = await _submit_key(hass, result["flow_id"])
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_STORAGE_BOX_ID: "42"}
+    )
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "storage_box"
     assert result["errors"] == {"base": "invalid_selection"}
     selector = _schema(result)[CONF_STORAGE_BOX_ID]
     assert selector.config["options"] == [BOX_OPTION]
+
+    with patch("custom_components.hetzner.async_setup_entry", return_value=True):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_STORAGE_BOX_ID: STORAGE_BOX_ID}
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["result"].unique_id == STORAGE_BOX_ID
 
 
 async def test_storage_box_step_already_configured(

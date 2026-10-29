@@ -305,7 +305,8 @@ class HetznerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 },
             )
 
-        if user_input is not None:
+        # Empty when the form without boxes is submitted to fetch them again
+        if user_input:
             # The dropdown submits the box ID, which stays stable while the
             # box's status or name may change between showing and submitting
             selected_box_id = user_input.get(STORAGE_BOX_SELECT_FIELD)
