@@ -178,11 +178,26 @@ class HetznerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """
         return [
             selector.SelectOptionDict(
-                value=box_id,
-                label=f"{box_info['name']} (ID: {box_id}, Status: {box_info['status']}, Type: {box_info['box_type']}, {box_info['description']})",
+                value=box_id, label=self._box_label(box_id, box_info)
             )
             for box_id, box_info in storage_boxes.items()
         ]
+
+    @staticmethod
+    def _box_label(box_id: str, box_info: dict) -> str:
+        """Format a dropdown label, leaving out fields the API did not return."""
+        details = [f"ID: {box_id}"]
+        if box_info["status"]:
+            details.append(f"Status: {box_info['status']}")
+        type_info = ", ".join(
+            part for part in (box_info["box_type"], box_info["description"]) if part
+        )
+        if type_info:
+            details.append(f"Type: {type_info}")
+
+        if box_info["name"]:
+            return f"{box_info['name']} ({', '.join(details)})"
+        return ", ".join(details)
 
     async def _fetch_storage_boxes(self, api_key: str, host: str) -> dict:
         """Fetch list of available storage boxes from Hetzner API.

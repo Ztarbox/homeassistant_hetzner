@@ -178,9 +178,10 @@ async def test_storage_box_step_lists_multiple_boxes(
     aioclient_mock: AiohttpClientMocker,
     storage_box: dict[str, Any],
 ) -> None:
-    """Test every box is offered and a box without a type still lists."""
+    """Test every box is offered and missing fields are left out of the label."""
     other = {"id": 42, "name": "other", "status": "initializing"}
-    payload = _list_payload(storage_box, other)
+    unnamed = {"id": 43, "name": None, "storage_box_type": {"name": "bx21"}}
+    payload = _list_payload(storage_box, other, unnamed)
     _queue_list_responses(aioclient_mock, payload, payload)
 
     result = await _start_flow(hass)
@@ -189,10 +190,8 @@ async def test_storage_box_step_lists_multiple_boxes(
     selector = _schema(result)[CONF_STORAGE_BOX_ID]
     assert selector.config["options"] == [
         BOX_OPTION,
-        {
-            "value": "42",
-            "label": "other (ID: 42, Status: initializing, Type: None, None)",
-        },
+        {"value": "42", "label": "other (ID: 42, Status: initializing)"},
+        {"value": "43", "label": "ID: 43, Type: bx21"},
     ]
 
 
