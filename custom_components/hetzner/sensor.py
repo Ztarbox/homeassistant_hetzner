@@ -9,6 +9,7 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
@@ -85,21 +86,36 @@ async def async_setup_entry(
     async_add_entities(entities, True)
 
 
-class HetznerStatusSensor(CoordinatorEntity, SensorEntity):
-    """Sensor representing the storage box status and details."""
+class HetznerEntity(CoordinatorEntity, SensorEntity):
+    """Base entity grouping all sensors under one storage box device."""
+
+    _attr_has_entity_name = True
 
     def __init__(self, coordinator: DataUpdateCoordinator, storage_box_id: str):
         super().__init__(coordinator)
         self._storage_box_id = storage_box_id
-        self._attr_unique_id = f"{DOMAIN}_storage_box_{self._storage_box_id}"
 
     @property
-    def name(self) -> str:
+    def device_info(self) -> DeviceInfo:
         data = self.coordinator.data or {}
-        box_name = data.get("name")
-        if box_name:
-            return f"Storage Box {box_name}"
-        return f"Storage Box {self._storage_box_id}"
+        box_name = data.get("name") or self._storage_box_id
+        return DeviceInfo(
+            identifiers={(DOMAIN, str(self._storage_box_id))},
+            name=f"Storage Box {box_name}",
+            manufacturer="Hetzner",
+            model=(data.get("storage_box_type") or {}).get("name"),
+            configuration_url="https://console.hetzner.com",
+        )
+
+
+class HetznerStatusSensor(HetznerEntity):
+    """Sensor representing the storage box status and details."""
+
+    def __init__(self, coordinator: DataUpdateCoordinator, storage_box_id: str):
+        super().__init__(coordinator, storage_box_id)
+        self._attr_unique_id = f"{DOMAIN}_storage_box_{self._storage_box_id}"
+        # Main feature of the device: entity takes the device name
+        self._attr_name = None
 
     @property
     def icon(self) -> str:
@@ -125,21 +141,13 @@ class HetznerStatusSensor(CoordinatorEntity, SensorEntity):
         }
 
 
-class HetznerLocationSensor(CoordinatorEntity, SensorEntity):
+class HetznerLocationSensor(HetznerEntity):
     """Sensor representing the storage box location."""
 
     def __init__(self, coordinator: DataUpdateCoordinator, storage_box_id: str):
-        super().__init__(coordinator)
-        self._storage_box_id = storage_box_id
+        super().__init__(coordinator, storage_box_id)
         self._attr_unique_id = f"{DOMAIN}_storage_box_{self._storage_box_id}_location"
-
-    @property
-    def name(self) -> str:
-        data = self.coordinator.data or {}
-        box_name = data.get("name")
-        if box_name:
-            return f"Storage Box {box_name} Location"
-        return f"Storage Box {self._storage_box_id} Location"
+        self._attr_name = "Location"
 
     @property
     def icon(self) -> str:
@@ -165,7 +173,7 @@ class HetznerLocationSensor(CoordinatorEntity, SensorEntity):
         }
 
 
-class HetznerSizeSensor(CoordinatorEntity, SensorEntity):
+class HetznerSizeSensor(HetznerEntity):
     """Sensor for various storage size metrics."""
 
     VALID_TYPES = {"total", "used", "data", "snapshots", "free"}
@@ -177,13 +185,12 @@ class HetznerSizeSensor(CoordinatorEntity, SensorEntity):
         metric: str,
         display_unit: str,
     ):
-        super().__init__(coordinator)
+        super().__init__(coordinator, storage_box_id)
 
         if metric not in self.VALID_TYPES:
             raise ValueError("Invalid metric for HetznerSizeSensor")
 
         self._metric = metric
-        self._storage_box_id = storage_box_id
         self._display_unit = display_unit
 
         # Use bytes as the unit (native value is bytes from API)
@@ -193,25 +200,17 @@ class HetznerSizeSensor(CoordinatorEntity, SensorEntity):
         # Report as a measurement (for long term statistics) and set device class
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_device_class = SensorDeviceClass.DATA_SIZE
-        self._attr_unique_id = (
-            f"{DOMAIN}_storage_box_{self._storage_box_id}_{self._metric}_"
-            f"{self._display_unit.lower()}"
-        )
-
-    @property
-    def name(self) -> str:
-        data = self.coordinator.data or {}
-        box_name = data.get("name")
-        suffix = {
+        self._attr_name = {
             "total": "Total Size",
             "used": "Total Used",
             "data": "Data Size",
             "snapshots": "Snapshot Size",
             "free": "Free Space",
-        }[self._metric]
-        if box_name:
-            return f"Storage Box {box_name} {suffix}"
-        return f"Storage Box {self._storage_box_id} {suffix}"
+        }[metric]
+        self._attr_unique_id = (
+            f"{DOMAIN}_storage_box_{self._storage_box_id}_{self._metric}_"
+            f"{self._display_unit.lower()}"
+        )
 
     @property
     def icon(self) -> str:
@@ -253,26 +252,18 @@ class HetznerSizeSensor(CoordinatorEntity, SensorEntity):
         return round(float(value) / factor, 2)
 
 
-class HetznerAccessOptionsSensor(CoordinatorEntity, SensorEntity):
+class HetznerAccessOptionsSensor(HetznerEntity):
     """Sensor that counts enabled access options and exposes each option as an attribute."""
 
     def __init__(self, coordinator: DataUpdateCoordinator, storage_box_id: str):
-        super().__init__(coordinator)
-        self._storage_box_id = storage_box_id
+        super().__init__(coordinator, storage_box_id)
         self._attr_unique_id = (
             f"{DOMAIN}_storage_box_{self._storage_box_id}_access_options"
         )
+        self._attr_name = "Access Options"
         self._attr_icon = "mdi:network"
         # Expose as a numeric measurement (count of enabled access methods)
         self._attr_state_class = SensorStateClass.MEASUREMENT
-
-    @property
-    def name(self) -> str:
-        data = self.coordinator.data or {}
-        box_name = data.get("name")
-        if box_name:
-            return f"Storage Box {box_name} Access Options"
-        return f"Storage Box {self._storage_box_id} Access Options"
 
     @property
     def native_value(self) -> int:
