@@ -13,6 +13,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
+    UpdateFailed,
 )
 
 from .const import (
@@ -54,8 +55,7 @@ async def async_setup_entry(
 
         async with session.get(url, headers=headers, timeout=10) as resp:
             if resp.status != 200:
-                _LOGGER.error("Error fetching storage box data: %s", resp.status)
-                return {}
+                raise UpdateFailed(f"Error fetching storage box data: {resp.status}")
             data = await resp.json()
             return data.get("storage_box") or {}
 
