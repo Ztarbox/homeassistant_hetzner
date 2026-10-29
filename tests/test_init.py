@@ -49,18 +49,26 @@ def _make_entry(
     unit: str = "GB",
     options: dict[str, Any] | None = None,
 ) -> MockConfigEntry:
-    """Create and add a config entry with the given version."""
+    """Create and add a config entry with the given version.
+
+    Up to version 3 the unit chosen during setup is stored in data, from
+    version 4 on in options.
+    """
+    data = {
+        CONF_API_KEY: API_KEY,
+        CONF_HOST: DEFAULT_HOST,
+        CONF_STORAGE_BOX_ID: STORAGE_BOX_ID,
+    }
+    if version < 4:
+        data[CONF_UNIT] = unit
+    else:
+        options = {CONF_UNIT: unit, **(options or {})}
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Hetzner backup",
         version=version,
         unique_id=STORAGE_BOX_ID,
-        data={
-            CONF_API_KEY: API_KEY,
-            CONF_HOST: DEFAULT_HOST,
-            CONF_STORAGE_BOX_ID: STORAGE_BOX_ID,
-            CONF_UNIT: unit,
-        },
+        data=data,
         options=options or {},
     )
     entry.add_to_hass(hass)
@@ -128,7 +136,7 @@ async def test_setup_options_unit_overrides_data(
     aioclient_mock: AiohttpClientMocker,
     storage_box: dict[str, Any],
 ) -> None:
-    """Unit from options wins over unit from data."""
+    """Unit from options wins over unit from data of a v3 entry."""
     _mock_box(aioclient_mock, storage_box)
     entry = _make_entry(hass, 3, unit="GB", options={CONF_UNIT: "TB"})
     await _setup(hass, entry)
@@ -175,7 +183,9 @@ async def test_migrate_v1_legacy_unique_ids(
     await _setup(hass, entry)
 
     registry = er.async_get(hass)
-    assert entry.version == 3
+    assert entry.version == 4
+    assert CONF_UNIT not in entry.data
+    assert entry.options == {CONF_UNIT: "GB"}
     for metric, reg in legacy.items():
         updated = registry.async_get(reg.entity_id)
         assert updated is not None
@@ -235,7 +245,7 @@ async def test_migrate_v1_removes_conflicting_stale_entity(
     assert updated is not None
     assert updated.unique_id == f"{PREFIX}_total_gb"
     assert "Removing conflicting stale entity" in caplog.text
-    assert entry.version == 3
+    assert entry.version == 4
 
 
 async def test_migrate_v2_entry_bumped_without_renaming(
@@ -257,11 +267,52 @@ async def test_migrate_v2_entry_bumped_without_renaming(
         await hass.async_block_till_done()
 
     assert entry.state is ConfigEntryState.LOADED
-    assert entry.version == 3
+    assert entry.version == 4
     assert migrate.call_count == 1
     updated = er.async_get(hass).async_get(reg.entity_id)
     assert updated is not None
     assert updated.unique_id == f"{PREFIX}_total_gb"
+
+
+@pytest.mark.parametrize(
+    ("data_unit", "options", "expected_options"),
+    [
+        ("GB", {}, {CONF_UNIT: "GB"}),
+        ("GB", {CONF_UNIT: "TB"}, {CONF_UNIT: "TB"}),
+        (None, {}, {}),
+    ],
+)
+async def test_migrate_v3_moves_unit_to_options(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    storage_box: dict[str, Any],
+    data_unit: str | None,
+    options: dict[str, Any],
+    expected_options: dict[str, Any],
+) -> None:
+    """The unit moves from data to options; a unit already in options wins."""
+    _mock_box(aioclient_mock, storage_box)
+    entry = _make_entry(hass, 3, options=options)
+    if data_unit is None:
+        data = dict(entry.data)
+        data.pop(CONF_UNIT)
+        hass.config_entries.async_update_entry(entry, data=data)
+    else:
+        assert entry.data[CONF_UNIT] == data_unit
+
+    await _setup(hass, entry)
+
+    assert entry.version == 4
+    assert entry.data == {
+        CONF_API_KEY: API_KEY,
+        CONF_HOST: DEFAULT_HOST,
+        CONF_STORAGE_BOX_ID: STORAGE_BOX_ID,
+    }
+    assert entry.options == expected_options
+    expected_unit = expected_options.get(CONF_UNIT, "B")
+    assert entry.runtime_data.unit == expected_unit
+    for metric, reg in _size_entities(hass, entry).items():
+        assert reg.unique_id == f"{PREFIX}_{metric}_{expected_unit.lower()}"
 
 
 async def test_migrate_current_entry_is_noop(

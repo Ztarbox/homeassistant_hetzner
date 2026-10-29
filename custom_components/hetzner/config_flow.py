@@ -62,10 +62,7 @@ class HetznerOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
-        current_unit = self.config_entry.options.get(
-            CONF_UNIT,
-            self.config_entry.data.get(CONF_UNIT, DEFAULT_UNIT),
-        )
+        current_unit = self.config_entry.options.get(CONF_UNIT, DEFAULT_UNIT)
 
         return self.async_show_form(
             step_id="init",
@@ -87,7 +84,7 @@ class HetznerOptionsFlow(config_entries.OptionsFlow):
 class HetznerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Hetzner Storage Box."""
 
-    VERSION = 3
+    VERSION = 4
 
     @staticmethod
     @callback
@@ -325,8 +322,9 @@ class HetznerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_API_KEY: self.data[CONF_API_KEY],
                         CONF_HOST: self.data[CONF_HOST],
                         CONF_STORAGE_BOX_ID: selected_box_id,
-                        CONF_UNIT: self.data[CONF_UNIT],
                     },
+                    # Display setting only, changed later in the options flow
+                    options={CONF_UNIT: self.data[CONF_UNIT]},
                 )
             else:
                 errors["base"] = "invalid_selection"

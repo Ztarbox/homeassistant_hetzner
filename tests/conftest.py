@@ -95,14 +95,14 @@ def config_entry(hass) -> MockConfigEntry:
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Hetzner backup",
-        version=3,
+        version=4,
         unique_id=STORAGE_BOX_ID,
         data={
             CONF_API_KEY: API_KEY,
             CONF_HOST: DEFAULT_HOST,
             CONF_STORAGE_BOX_ID: STORAGE_BOX_ID,
-            CONF_UNIT: "GB",
         },
+        options={CONF_UNIT: "GB"},
     )
     entry.add_to_hass(hass)
     return entry

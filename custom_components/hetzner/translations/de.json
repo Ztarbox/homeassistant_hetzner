@@ -11,6 +11,10 @@
         "data": {
           "api_key": "API-Schlüssel",
           "unit": "Anzeigeeinheit"
+        },
+        "data_description": {
+          "api_key": "API-Token aus der Hetzner Console (dein Projekt → Sicherheit → API-Tokens). Lesezugriff genügt.",
+          "unit": "Einheit der Größen-Sensoren. Sie lässt sich später in den Optionen der Integration ändern."
         }
       },
       "storage_box": {
@@ -18,6 +22,9 @@
         "description": "Wähle eine Storage Box aus, die überwacht werden soll.",
         "data": {
           "storage_box_id": "Bitte eine Storage Box auswählen"
+        },
+        "data_description": {
+          "storage_box_id": "Die zu überwachende Storage Box. Für eine weitere Box die Integration erneut hinzufügen."
         }
       },
       "reauth_confirm": {
@@ -40,6 +47,7 @@
       "connection_timeout": "Zeitüberschreitung bei der Verbindung",
       "api_error": "API-Fehler",
       "validation_error": "Validierungsfehler",
+      "invalid_host": "Hetzner-API-Endpunkt nicht gefunden",
       "storage_box_not_found": "Dieser API-Token hat keinen Zugriff auf die konfigurierte Storage Box"
     }
   },
@@ -50,6 +58,9 @@
         "description": "Anzeigeeinstellungen für die Hetzner Integration ändern.",
         "data": {
           "unit": "Anzeigeeinheit"
+        },
+        "data_description": {
+          "unit": "Einheit der Größen-Sensoren."
         }
       }
     }

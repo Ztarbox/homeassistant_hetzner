@@ -66,21 +66,21 @@ def _mock_box(
     aioclient_mock.get(BOX_URL, json={"storage_box": payload}, status=status)
 
 
-def _make_entry(hass: HomeAssistant, **data: Any) -> MockConfigEntry:
-    """Create and add a v3 config entry with the given data overrides."""
+def _make_entry(hass: HomeAssistant, unit: str = "GB", **data: Any) -> MockConfigEntry:
+    """Create and add a v4 config entry with the given data overrides."""
     entry_data = {
         CONF_API_KEY: API_KEY,
         CONF_HOST: DEFAULT_HOST,
         CONF_STORAGE_BOX_ID: STORAGE_BOX_ID,
-        CONF_UNIT: "GB",
     }
     entry_data.update(data)
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Hetzner backup",
-        version=3,
+        version=4,
         unique_id=STORAGE_BOX_ID,
         data={k: v for k, v in entry_data.items() if v is not None},
+        options={CONF_UNIT: unit},
     )
     entry.add_to_hass(hass)
     return entry
@@ -246,7 +246,7 @@ async def test_size_sensors_units(
     expected: dict[str, str],
 ) -> None:
     """Size sensors convert bytes to the configured unit with data size metadata."""
-    entry = _make_entry(hass, **{CONF_UNIT: unit})
+    entry = _make_entry(hass, unit=unit)
     _mock_box(aioclient_mock, storage_box)
     await _setup(hass, entry)
 
@@ -543,7 +543,7 @@ async def test_missing_storage_box_id(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Without a storage box id setup fails, logs an error and adds no entities."""
-    entry = _make_entry(hass, **{CONF_STORAGE_BOX_ID: None})
+    entry = _make_entry(hass, storage_box_id=None)
     with caplog.at_level(logging.ERROR):
         await _setup(hass, entry)
 

@@ -60,10 +60,7 @@ async def async_setup_entry(
         _LOGGER.error("No storage box id in config entry")
         return False
 
-    unit = config_entry.options.get(
-        CONF_UNIT,
-        config_entry.data.get(CONF_UNIT, DEFAULT_UNIT),
-    )
+    unit = config_entry.options.get(CONF_UNIT, DEFAULT_UNIT)
 
     # Done on every setup, not only in the update listener: the unit can be
     # changed in the options flow while the entry waits for a setup retry,
@@ -112,7 +109,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     ).lower()
 
     _LOGGER.debug(
-        "Migrating config entry %s with version %s to version 3",
+        "Migrating config entry %s with version %s to version 4",
         config_entry.entry_id,
         config_entry.version,
     )
@@ -138,9 +135,18 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
                     new_unique_id=new_unique_id,
                 )
 
-    # Version 2 entries already use unit-suffixed unique_ids
-    if config_entry.version < 3:
-        hass.config_entries.async_update_entry(config_entry, version=3)
+    # Version 2 entries already use unit-suffixed unique_ids. Up to version 3
+    # the unit chosen during setup was stored in data; it is a display setting
+    # and belongs in options
+    if config_entry.version < 4:
+        data = dict(config_entry.data)
+        options = dict(config_entry.options)
+        data_unit = data.pop(CONF_UNIT, None)
+        if data_unit is not None:
+            options.setdefault(CONF_UNIT, data_unit)
+        hass.config_entries.async_update_entry(
+            config_entry, data=data, options=options, version=4
+        )
 
     return True
 
@@ -154,10 +160,7 @@ async def _async_update_listener(
     comes from the reauth flow.
     """
     runtime_data = config_entry.runtime_data
-    new_unit = config_entry.options.get(
-        CONF_UNIT,
-        config_entry.data.get(CONF_UNIT, DEFAULT_UNIT),
-    )
+    new_unit = config_entry.options.get(CONF_UNIT, DEFAULT_UNIT)
 
     # HA also calls the listener for title or system option changes
     if (

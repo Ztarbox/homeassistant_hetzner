@@ -167,11 +167,11 @@ async def test_full_flow_creates_entry(
         CONF_API_KEY: API_KEY,
         CONF_HOST: DEFAULT_HOST,
         CONF_STORAGE_BOX_ID: STORAGE_BOX_ID,
-        CONF_UNIT: "GB",
     }
+    assert result["options"] == {CONF_UNIT: "GB"}
     entry = result["result"]
     assert entry.unique_id == STORAGE_BOX_ID
-    assert entry.version == 3
+    assert entry.version == 4
 
 
 async def test_storage_box_step_lists_multiple_boxes(
@@ -322,10 +322,10 @@ def _options_default(result: ConfigFlowResult) -> Any:
     raise AssertionError("unit field missing")
 
 
-async def test_options_flow_defaults_to_data_unit(
+async def test_options_flow_defaults_to_current_unit(
     hass: HomeAssistant, config_entry: MockConfigEntry
 ) -> None:
-    """Test the options form defaults to the unit stored in data."""
+    """Test the options form defaults to the configured unit."""
     result = await hass.config_entries.options.async_init(config_entry.entry_id)
 
     assert result["type"] is FlowResultType.FORM
@@ -333,10 +333,10 @@ async def test_options_flow_defaults_to_data_unit(
     assert _options_default(result) == "GB"
 
 
-async def test_options_flow_options_override_data(
+async def test_options_flow_follows_changed_unit(
     hass: HomeAssistant, config_entry: MockConfigEntry
 ) -> None:
-    """Test the options form prefers the unit stored in options."""
+    """Test the options form defaults to a unit changed earlier."""
     hass.config_entries.async_update_entry(config_entry, options={CONF_UNIT: "TB"})
 
     result = await hass.config_entries.options.async_init(config_entry.entry_id)
@@ -346,7 +346,7 @@ async def test_options_flow_options_override_data(
 
 async def test_options_flow_default_unit_fallback(hass: HomeAssistant) -> None:
     """Test the options form falls back to the default unit."""
-    entry = MockConfigEntry(domain=DOMAIN, version=3, data={})
+    entry = MockConfigEntry(domain=DOMAIN, version=4, data={})
     entry.add_to_hass(hass)
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
@@ -400,7 +400,8 @@ async def test_user_step_unit_defaults(
         )
         await hass.async_block_till_done()
 
-    assert result["data"][CONF_UNIT] == DEFAULT_UNIT
+    assert CONF_UNIT not in result["data"]
+    assert result["options"] == {CONF_UNIT: DEFAULT_UNIT}
 
 
 async def test_reauth_flow_updates_api_key(
@@ -427,7 +428,7 @@ async def test_reauth_flow_updates_api_key(
     assert result["reason"] == "reauth_successful"
     assert config_entry.data[CONF_API_KEY] == "new-key"
     assert config_entry.data[CONF_STORAGE_BOX_ID] == STORAGE_BOX_ID
-    assert config_entry.data[CONF_UNIT] == "GB"
+    assert config_entry.options == {CONF_UNIT: "GB"}
     assert len(setup.mock_calls) == 1
     assert aioclient_mock.call_count == 1
     _, url, _, headers = aioclient_mock.mock_calls[0]

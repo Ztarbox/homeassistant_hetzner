@@ -11,6 +11,10 @@
         "data": {
           "api_key": "API-sleutel",
           "unit": "Weergave-eenheid"
+        },
+        "data_description": {
+          "api_key": "API-token uit de Hetzner Console (uw project → Security → API tokens). Leestoegang is voldoende.",
+          "unit": "Eenheid van de groottesensoren. U kunt deze later wijzigen in de opties van de integratie."
         }
       },
       "storage_box": {
@@ -18,6 +22,9 @@
         "description": "Kies een opslagbox om te monitoren.",
         "data": {
           "storage_box_id": "Selecteer een opslagbox"
+        },
+        "data_description": {
+          "storage_box_id": "De opslagbox die gemonitord wordt. Voeg de integratie opnieuw toe om een andere box te monitoren."
         }
       },
       "reauth_confirm": {
@@ -40,6 +47,7 @@
       "connection_timeout": "Verbindingstime-out",
       "api_error": "API-fout",
       "validation_error": "Validatiefout",
+      "invalid_host": "Hetzner API-endpoint niet gevonden",
       "storage_box_not_found": "Deze API-token heeft geen toegang tot de geconfigureerde opslagbox"
     }
   },
@@ -50,6 +58,9 @@
         "description": "Wijzig de weergave-instellingen voor de Hetzner integratie.",
         "data": {
           "unit": "Weergave-eenheid"
+        },
+        "data_description": {
+          "unit": "Eenheid van de groottesensoren."
         }
       }
     }
