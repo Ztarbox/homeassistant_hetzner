@@ -305,16 +305,19 @@ async def test_options_change_user_unit_override(
     config_entry: MockConfigEntry,
     storage_box: dict[str, Any],
 ) -> None:
-    """A user unit override in the "sensor" options survives a unit change."""
+    """A unit change clears a user unit override but keeps other sensor options."""
     _mock_box(aioclient_mock, storage_box)
     await _setup(hass, config_entry)
     registry = er.async_get(hass)
     entity_id = _size_entities(hass, config_entry)["total"].entity_id
 
     registry.async_update_entity_options(
-        entity_id, "sensor", {"unit_of_measurement": "MB"}
+        entity_id, "sensor", {"unit_of_measurement": "MB", "display_precision": 1}
     )
     await hass.async_block_till_done()
+    state = hass.states.get(entity_id)
+    assert state is not None
+    assert state.attributes["unit_of_measurement"] == "MB"
 
     hass.config_entries.async_update_entry(config_entry, options={CONF_UNIT: "TB"})
     await hass.async_block_till_done()
@@ -322,12 +325,35 @@ async def test_options_change_user_unit_override(
     reg = registry.async_get(entity_id)
     assert reg is not None
     assert reg.unique_id == f"{PREFIX}_total_tb"
-    # _update_sensor_unit_options only clears RegistryEntry.unit_of_measurement
-    # (re-set by the platform on reload); the user override is not cleared.
-    assert reg.options["sensor"]["unit_of_measurement"] == "MB"
+    assert "unit_of_measurement" not in reg.options["sensor"]
+    assert reg.options["sensor"]["display_precision"] == 1
     state = hass.states.get(entity_id)
     assert state is not None
-    assert state.attributes["unit_of_measurement"] == "MB"
+    assert state.attributes["unit_of_measurement"] == "TB"
+    assert state.state == "1.0"
+
+
+async def test_options_change_without_user_override(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    storage_box: dict[str, Any],
+) -> None:
+    """Without a user unit override the "sensor" options are left untouched."""
+    _mock_box(aioclient_mock, storage_box)
+    await _setup(hass, config_entry)
+    registry = er.async_get(hass)
+    entity_id = _size_entities(hass, config_entry)["total"].entity_id
+    before = registry.async_get(entity_id)
+    assert before is not None
+    sensor_options = before.options.get("sensor")
+
+    hass.config_entries.async_update_entry(config_entry, options={CONF_UNIT: "TB"})
+    await hass.async_block_till_done()
+
+    reg = registry.async_get(entity_id)
+    assert reg is not None
+    assert reg.options.get("sensor") == sensor_options
 
 
 async def test_options_change_renames_legacy_ids_and_removes_conflicts(

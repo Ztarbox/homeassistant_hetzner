@@ -34,17 +34,20 @@ def _update_sensor_unit_options(
 ) -> None:
     """Update stored sensor unit options in the entity registry."""
     # This is the option SensorEntity actually reads back on startup
-    entity_registry.async_update_entity_options(
+    registry_entry = entity_registry.async_update_entity_options(
         entity_id,
         f"{SENSOR_DOMAIN}.private",
         {"suggested_unit_of_measurement": unit},
     )
 
-    # Clear any explicit user override if one exists
-    entity_registry.async_update_entity(
-        entity_id,
-        unit_of_measurement=None,
-    )
+    # Clear an explicit user unit override, keeping other sensor options
+    sensor_options = dict(registry_entry.options.get(SENSOR_DOMAIN, {}))
+    if sensor_options.pop("unit_of_measurement", None) is not None:
+        entity_registry.async_update_entity_options(
+            entity_id,
+            SENSOR_DOMAIN,
+            sensor_options,
+        )
 
 
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
