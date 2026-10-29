@@ -11,11 +11,14 @@ from homeassistant.helpers import entity_registry as er
 from .const import (
     CONF_API_KEY,
     CONF_HOST,
+    CONF_STORAGE_BOX_ID,
     CONF_UNIT,
+    DATA_COORDINATOR,
     DEFAULT_HOST,
     DEFAULT_UNIT,
     DOMAIN,
 )
+from .coordinator import HetznerDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -48,7 +51,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     """Set up Hetzner from a config entry."""
     hass.data.setdefault(DOMAIN, {})
 
-    hass.data[DOMAIN][config_entry.entry_id] = {
+    entry_data = {
         CONF_API_KEY: config_entry.data.get(CONF_API_KEY),
         CONF_HOST: config_entry.data.get(CONF_HOST, DEFAULT_HOST),
         CONF_UNIT: config_entry.options.get(
@@ -56,6 +59,22 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
             config_entry.data.get(CONF_UNIT, DEFAULT_UNIT),
         ),
     }
+
+    storage_box_id = config_entry.data.get(CONF_STORAGE_BOX_ID)
+    if storage_box_id is not None:
+        coordinator = HetznerDataUpdateCoordinator(
+            hass,
+            config_entry,
+            entry_data[CONF_API_KEY],
+            entry_data[CONF_HOST],
+            storage_box_id,
+        )
+        # Refresh here rather than in the platform: HA only turns
+        # ConfigEntryNotReady into a setup retry when raised from setup_entry
+        await coordinator.async_config_entry_first_refresh()
+        entry_data[DATA_COORDINATOR] = coordinator
+
+    hass.data[DOMAIN][config_entry.entry_id] = entry_data
 
     config_entry.async_on_unload(
         config_entry.add_update_listener(_async_update_listener)

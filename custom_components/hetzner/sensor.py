@@ -1,4 +1,3 @@
-from datetime import timedelta
 import logging
 
 from homeassistant.components.sensor import (
@@ -8,28 +7,22 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
-    UpdateFailed,
 )
 
 from .const import (
-    CONF_API_KEY,
-    CONF_HOST,
     CONF_STORAGE_BOX_ID,
     CONF_UNIT,
-    DEFAULT_HOST,
+    DATA_COORDINATOR,
     DEFAULT_UNIT,
     DOMAIN,
 )
 
 _LOGGER = logging.getLogger(__name__)
-
-SCAN_INTERVAL = timedelta(seconds=600)  # update every 10 minutes
 
 
 async def async_setup_entry(
@@ -38,38 +31,17 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
     discovery_info=None,
 ) -> None:
-    """Set up sensors for Hetzner Storage Box using a shared coordinator."""
-    api_key = hass.data[DOMAIN][config_entry.entry_id].get(CONF_API_KEY)
-    host = hass.data[DOMAIN][config_entry.entry_id].get(CONF_HOST, DEFAULT_HOST)
+    """Set up sensors for Hetzner Storage Box using the entry's coordinator."""
+    entry_data = hass.data[DOMAIN][config_entry.entry_id]
     storage_box_id = config_entry.data.get(CONF_STORAGE_BOX_ID)
-    display_unit = hass.data[DOMAIN][config_entry.entry_id].get(CONF_UNIT, DEFAULT_UNIT)
+    display_unit = entry_data.get(CONF_UNIT, DEFAULT_UNIT)
 
     if storage_box_id is None:
         _LOGGER.error("No storage box id in config entry")
         return
 
-    # Create a coordinator that fetches the storage box info and stats
-    async def async_update_data():
-        session = async_get_clientsession(hass)
-        headers = {"Authorization": f"Bearer {api_key}"}
-        url = f"https://{host}/v1/storage_boxes/{storage_box_id}"
-
-        async with session.get(url, headers=headers, timeout=10) as resp:
-            if resp.status != 200:
-                raise UpdateFailed(f"Error fetching storage box data: {resp.status}")
-            data = await resp.json()
-            return data.get("storage_box") or {}
-
-    coordinator = DataUpdateCoordinator(
-        hass,
-        _LOGGER,
-        name=f"{DOMAIN}_{storage_box_id}",
-        update_method=async_update_data,
-        update_interval=SCAN_INTERVAL,
-    )
-
-    # Do the first refresh so entities have data immediately
-    await coordinator.async_config_entry_first_refresh()
+    # Already refreshed in __init__.async_setup_entry
+    coordinator = entry_data[DATA_COORDINATOR]
 
     # Create entities: status, location, access options, total size, used size, data size, snapshot size, free space
     entities = [

@@ -395,34 +395,38 @@ async def test_first_refresh_error(
     storage_box: dict[str, Any],
     mock_kwargs: dict[str, Any],
 ) -> None:
-    """API errors on the first refresh create no entities.
+    """API errors on the first refresh retry setup and create no entities.
 
     Error statuses carry a valid body so only the status check can reject them.
     """
     aioclient_mock.get(BOX_URL, json={"storage_box": storage_box}, **mock_kwargs)
     await _setup(hass, config_entry)
 
+    assert config_entry.state is ConfigEntryState.SETUP_RETRY
     assert aioclient_mock.call_count == 1
+    assert config_entry.entry_id not in hass.data.get(DOMAIN, {})
     assert hass.states.async_entity_ids("sensor") == []
     ent_reg = er.async_get(hass)
     assert er.async_entries_for_config_entry(ent_reg, config_entry.entry_id) == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="first refresh runs in the forwarded sensor platform, so HA swallows "
-    "ConfigEntryNotReady and the entry stays LOADED instead of retrying",
-)
-async def test_first_refresh_error_retries_setup(
+async def test_first_refresh_error_recovers_on_retry(
     hass: HomeAssistant,
     aioclient_mock: AiohttpClientMocker,
     config_entry: MockConfigEntry,
+    storage_box: dict[str, Any],
 ) -> None:
-    """API errors on the first refresh put the entry into setup retry."""
+    """A failed first refresh is retried and loads once the API recovers."""
     aioclient_mock.get(BOX_URL, status=500)
     await _setup(hass, config_entry)
-
     assert config_entry.state is ConfigEntryState.SETUP_RETRY
+
+    _mock_box(aioclient_mock, storage_box)
+    await hass.config_entries.async_reload(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert config_entry.state is ConfigEntryState.LOADED
+    assert hass.states.get(PREFIX).state == "active"  # type: ignore[union-attr]
 
 
 @pytest.mark.parametrize(

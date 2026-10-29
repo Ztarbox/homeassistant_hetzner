@@ -23,9 +23,11 @@ from custom_components.hetzner.const import (
     CONF_HOST,
     CONF_STORAGE_BOX_ID,
     CONF_UNIT,
+    DATA_COORDINATOR,
     DEFAULT_HOST,
     DOMAIN,
 )
+from custom_components.hetzner.coordinator import HetznerDataUpdateCoordinator
 
 from tests.conftest import API_KEY, BOX_URL, STORAGE_BOX_ID
 
@@ -101,7 +103,13 @@ async def test_setup_and_unload(
     await _setup(hass, config_entry)
 
     assert config_entry.state is ConfigEntryState.LOADED
-    assert hass.data[DOMAIN][config_entry.entry_id] == {
+    entry_data = dict(hass.data[DOMAIN][config_entry.entry_id])
+    coordinator = entry_data.pop(DATA_COORDINATOR)
+    assert isinstance(coordinator, HetznerDataUpdateCoordinator)
+    assert coordinator.config_entry is not None
+    assert coordinator.config_entry.entry_id == config_entry.entry_id
+    assert coordinator.data == storage_box
+    assert entry_data == {
         CONF_API_KEY: API_KEY,
         CONF_HOST: DEFAULT_HOST,
         CONF_UNIT: "GB",

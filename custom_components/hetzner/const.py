@@ -6,6 +6,9 @@ CONF_HOST = "host"
 CONF_STORAGE_BOX_ID = "storage_box_id"
 CONF_UNIT = "unit"
 
+# hass.data keys
+DATA_COORDINATOR = "coordinator"
+
 # Default values
 # Hetzner public API host (fixed)
 DEFAULT_HOST = "api.hetzner.com"

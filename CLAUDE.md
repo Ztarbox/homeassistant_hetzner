@@ -21,8 +21,9 @@ CI (`.github/workflows/`) runs pytest, black, isort, flake8, mypy separately, pl
 ## Architecture
 
 - `config_flow.py`: user step (API key → validate → fetch storage boxes → pick box + display unit) and an `OptionsFlow` to change the unit later. `VERSION = 3`.
-- `__init__.py`: stores api key/host/unit per entry in `hass.data[DOMAIN][entry_id]` (unit prefers `options` over `data`), forwards to the `sensor` platform, and registers an update listener.
-- `sensor.py`: one `DataUpdateCoordinator` per config entry (10-minute poll) shared by all entities: status, location, access options, and five `HetznerSizeSensor`s (`total`, `used`, `data`, `snapshots`, `free`). API values are bytes; `HetznerSizeSensor` converts to the selected display unit.
+- `__init__.py`: stores api key/host/unit per entry in `hass.data[DOMAIN][entry_id]` (unit prefers `options` over `data`), creates the coordinator and runs its first refresh (so API errors put the entry into setup retry; raising `ConfigEntryNotReady` from a forwarded platform would only be logged), forwards to the `sensor` platform, and registers an update listener.
+- `coordinator.py`: `HetznerDataUpdateCoordinator`, one per config entry (10-minute poll), stored under `hass.data[DOMAIN][entry_id]["coordinator"]`.
+- `sensor.py`: entities sharing the coordinator: status, location, access options, and five `HetznerSizeSensor`s (`total`, `used`, `data`, `snapshots`, `free`). API values are bytes; `HetznerSizeSensor` converts to the selected display unit.
 
 ### Unit changes and unique_id migration (non-obvious)
 
