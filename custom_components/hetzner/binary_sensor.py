@@ -14,7 +14,8 @@ from .entity import HetznerEntity
 PARALLEL_UPDATES = 0
 
 # One binary sensor per boolean of access_settings in the API; the key is the
-# API field and the end of the unique_id
+# API field and the end of the unique_id. These are the settings of the main
+# account only, subaccounts have their own, so the names say "(main account)"
 ACCESS_SETTINGS: tuple[BinarySensorEntityDescription, ...] = tuple(
     BinarySensorEntityDescription(
         key=key,
@@ -31,7 +32,8 @@ ACCESS_SETTINGS: tuple[BinarySensorEntityDescription, ...] = tuple(
 )
 
 # English entity names by translation key, the base of new entity_ids in every
-# language; must match translations/en.json (checked by the tests)
+# language; must match translations/en.json without the " (main account)"
+# suffix, which entity_ids leave out (checked by the tests)
 OBJECT_ID_NAMES = {
     "reachable_externally": "Reachable externally",
     "samba": "Samba",

@@ -154,8 +154,8 @@ async def test_entities_created(
 @pytest.mark.parametrize(
     ("language", "free_space_name", "reachable_name"),
     [
-        ("de", "Freier Speicher", "Extern erreichbar"),
-        ("nl", "Vrije ruimte", "Extern bereikbaar"),
+        ("de", "Freier Speicher", "Extern erreichbar (Hauptkonto)"),
+        ("nl", "Vrije ruimte", "Extern bereikbaar (hoofdaccount)"),
     ],
 )
 async def test_entity_ids_stay_english(
@@ -905,7 +905,8 @@ def test_binary_sensor_without_coordinator_data() -> None:
     assert sensor.is_on is None
 
 
-# translation_key -> English name, which also makes up the entity_id
+# translation_key -> English name, which also makes up the entity_id (without
+# the binary sensors' " (main account)")
 TRANSLATED_ENTITIES = {
     f"{PREFIX}_location": ("location", "Location"),
     f"{PREFIX}_total_size": ("total_size", "Total size"),
@@ -915,14 +916,14 @@ TRANSLATED_ENTITIES = {
     f"{PREFIX}_free_space": ("free_space", "Free space"),
     f"{BINARY_PREFIX}_reachable_externally": (
         "reachable_externally",
-        "Reachable externally",
+        "Reachable externally (main account)",
     ),
-    f"{BINARY_PREFIX}_samba": ("samba", "Samba"),
-    f"{BINARY_PREFIX}_ssh": ("ssh", "SSH"),
-    f"{BINARY_PREFIX}_webdav": ("webdav", "WebDAV"),
+    f"{BINARY_PREFIX}_samba": ("samba", "Samba (main account)"),
+    f"{BINARY_PREFIX}_ssh": ("ssh", "SSH (main account)"),
+    f"{BINARY_PREFIX}_webdav": ("webdav", "WebDAV (main account)"),
     f"{BINARY_PREFIX}_zfs_snapshot_folder": (
         "zfs_snapshot_folder",
-        "ZFS snapshot folder",
+        "ZFS snapshot folder (main account)",
     ),
 }
 

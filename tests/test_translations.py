@@ -183,10 +183,11 @@ def test_object_id_names_match_english() -> None:
     assert OBJECT_ID_NAMES == {
         key: value["name"] for key, value in sensors.items() if "name" in value
     }
+    # Binary sensor names end with " (main account)"; the entity_ids leave it out
     binary_sensors = EN["entity"]["binary_sensor"]
-    assert BINARY_OBJECT_ID_NAMES == {
-        key: value["name"] for key, value in binary_sensors.items()
-    }
+    assert {
+        key: f"{name} (main account)" for key, name in BINARY_OBJECT_ID_NAMES.items()
+    } == {key: value["name"] for key, value in binary_sensors.items()}
 
 
 def test_binary_sensor_translations() -> None:

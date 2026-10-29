@@ -51,19 +51,19 @@
   "entity": {
     "binary_sensor": {
       "reachable_externally": {
-        "name": "Extern erreichbar"
+        "name": "Extern erreichbar (Hauptkonto)"
       },
       "samba": {
-        "name": "Samba"
+        "name": "Samba (Hauptkonto)"
       },
       "ssh": {
-        "name": "SSH"
+        "name": "SSH (Hauptkonto)"
       },
       "webdav": {
-        "name": "WebDAV"
+        "name": "WebDAV (Hauptkonto)"
       },
       "zfs_snapshot_folder": {
-        "name": "ZFS-Snapshot-Ordner"
+        "name": "ZFS-Snapshot-Ordner (Hauptkonto)"
       }
     },
     "sensor": {

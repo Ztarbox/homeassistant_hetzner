@@ -31,7 +31,7 @@
 **Hetzner Storage Box**  
 
 Home Assistant custom component that exposes storage metrics for your [Hetzner Storage Box](https://www.hetzner.com/storage/storage-box/) via the official JSON API.  
-Track **total, used, free, data and snapshot sizes** as native data size sensors (shown in GiB by default, any other unit can be picked per sensor), plus a status sensor that shows the box state and enriches it with details such as type, creation date and server name. Also a `location` sensor is available to show details of where your data is stored, and binary sensors show which access methods (SSH, Samba, WebDAV, external reachability, ZFS snapshot folder) are enabled.
+Track **total, used, free, data and snapshot sizes** as native data size sensors (shown in GiB by default, any other unit can be picked per sensor), plus a status sensor that shows the box state and enriches it with details such as type, creation date and server name. Also a `location` sensor is available to show details of where your data is stored, and binary sensors show which access methods (SSH, Samba, WebDAV, external reachability, ZFS snapshot folder) are enabled for the main account.
 Perfect for monitoring your off-site backup space and add it to dashboards, automations and long-term statistics.
 
 ## Installation
@@ -154,7 +154,7 @@ The integration provides the following sensors. Their names follow the Home Assi
 
 ## Binary Sensors
 
-One binary sensor per access setting of the Storage Box shows whether it is enabled (`on`) or disabled (`off`). They are diagnostic entities, so they appear under **Diagnostic** on the device page. A setting the API does not report shows as unknown.
+One binary sensor per access setting of the Storage Box shows whether it is enabled (`on`) or disabled (`off`). These are the settings of the Storage Box's main account, so their names end with "(main account)" (the entity IDs leave this out). Subaccounts have their own access settings, which this version does not cover yet. The binary sensors are diagnostic entities, so they appear under **Diagnostic** on the device page. A setting the API does not report shows as unknown.
 
 | Entity ID | Shows whether |
 | --- | --- |
