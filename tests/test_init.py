@@ -385,6 +385,49 @@ async def test_options_change_without_user_override(
     assert reg.options.get("sensor") == sensor_options
 
 
+async def test_unit_change_during_setup_retry_reuses_entities(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    storage_box: dict[str, Any],
+) -> None:
+    """A unit changed while setup waits for a retry renames the size sensors."""
+    registry = er.async_get(hass)
+    existing = {m: _register(hass, f"{PREFIX}_{m}_gb", config_entry) for m in METRICS}
+    registry.async_update_entity_options(
+        existing["total"].entity_id, "sensor", {"unit_of_measurement": "MB"}
+    )
+
+    aioclient_mock.get(BOX_URL, status=500)
+    assert not await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+    assert config_entry.state is ConfigEntryState.SETUP_RETRY
+
+    hass.config_entries.async_update_entry(config_entry, options={CONF_UNIT: "TB"})
+    await hass.async_block_till_done()
+
+    aioclient_mock.clear_requests()
+    _mock_box(aioclient_mock, storage_box)
+    await hass.config_entries.async_reload(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert config_entry.state is ConfigEntryState.LOADED
+    after = _size_entities(hass, config_entry)
+    for metric, reg in existing.items():
+        assert after[metric].entity_id == reg.entity_id
+        assert after[metric].unique_id == f"{PREFIX}_{metric}_tb"
+        assert (
+            after[metric].options["sensor.private"]["suggested_unit_of_measurement"]
+            == "TB"
+        )
+    assert "unit_of_measurement" not in after["total"].options["sensor"]
+    # No duplicate entities were created
+    assert len(er.async_entries_for_config_entry(registry, config_entry.entry_id)) == 8
+    state = hass.states.get(existing["total"].entity_id)
+    assert state is not None
+    assert state.attributes["unit_of_measurement"] == "TB"
+
+
 async def test_options_change_renames_legacy_ids_and_removes_conflicts(
     hass: HomeAssistant,
     aioclient_mock: AiohttpClientMocker,

@@ -70,6 +70,11 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
         _LOGGER.error("No storage box id in config entry")
         return False
 
+    # Done on every setup, not only in the update listener: the unit can be
+    # changed in the options flow while the entry waits for a setup retry,
+    # when no listener is registered
+    await _async_align_size_unique_ids(hass, config_entry, entry_data[CONF_UNIT])
+
     coordinator = HetznerDataUpdateCoordinator(
         hass,
         config_entry,
@@ -151,12 +156,15 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
 async def _async_update_listener(
     hass: HomeAssistant, config_entry: ConfigEntry
 ) -> None:
-    """Rename size sensor unique_ids when unit changes, update sensor options, then reload."""
-    new_unit = config_entry.options.get(
-        CONF_UNIT,
-        config_entry.data.get(CONF_UNIT, DEFAULT_UNIT),
-    ).upper()
+    """Reload so setup renames the size sensor unique_ids to the new unit."""
+    await hass.config_entries.async_reload(config_entry.entry_id)
 
+
+async def _async_align_size_unique_ids(
+    hass: HomeAssistant, config_entry: ConfigEntry, unit: str
+) -> None:
+    """Rename size sensor unique_ids to the unit and reset their unit options."""
+    unit = unit.upper()
     entity_registry = er.async_get(hass)
 
     for entry in er.async_entries_for_config_entry(
@@ -175,11 +183,15 @@ async def _async_update_listener(
 
         # Current format: hetzner_storage_box_<id>_<metric>_<unit>
         if len(parts) >= 6 and parts[-2] in SIZE_METRICS and parts[-1] in VALID_UNITS:
-            new_unique_id = "_".join(parts[:-1] + [new_unit.lower()])
+            new_unique_id = "_".join(parts[:-1] + [unit.lower()])
         # Legacy format: hetzner_storage_box_<id>_<metric>
         elif len(parts) >= 5 and parts[-1] in SIZE_METRICS:
-            new_unique_id = f"{unique_id}_{new_unit.lower()}"
+            new_unique_id = f"{unique_id}_{unit.lower()}"
         else:
+            continue
+
+        # Unchanged unit: keep the options the user set on the entity
+        if new_unique_id == unique_id:
             continue
 
         await _safe_update_unique_id(
@@ -188,16 +200,7 @@ async def _async_update_listener(
             entity_entry=entry,
             new_unique_id=new_unique_id,
         )
-        _update_sensor_unit_options(entity_registry, entry.entity_id, new_unit)
-
-    hass.data.setdefault(DOMAIN, {})
-    hass.data[DOMAIN][config_entry.entry_id] = {
-        CONF_API_KEY: config_entry.data.get(CONF_API_KEY),
-        CONF_HOST: config_entry.data.get(CONF_HOST, DEFAULT_HOST),
-        CONF_UNIT: new_unit,
-    }
-
-    await hass.config_entries.async_reload(config_entry.entry_id)
+        _update_sensor_unit_options(entity_registry, entry.entity_id, unit)
 
 
 async def _safe_update_unique_id(
