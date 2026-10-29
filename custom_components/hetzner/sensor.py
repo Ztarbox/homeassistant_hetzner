@@ -52,7 +52,8 @@ async def async_setup_entry(
         HetznerSizeSensor(coordinator, storage_box_id, "free", display_unit),
     ]
 
-    async_add_entities(entities, True)
+    # No update_before_add: the coordinator already holds fresh data
+    async_add_entities(entities)
 
 
 class HetznerEntity(CoordinatorEntity, SensorEntity):

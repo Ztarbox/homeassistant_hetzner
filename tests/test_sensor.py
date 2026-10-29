@@ -109,6 +109,8 @@ async def test_entities_created(
     await _setup(hass, config_entry)
 
     assert config_entry.state is ConfigEntryState.LOADED
+    # Entities reuse the first refresh instead of fetching again
+    assert aioclient_mock.call_count == 1
     assert aioclient_mock.mock_calls[0][3]["Authorization"] == f"Bearer {API_KEY}"
 
     ent_reg = er.async_get(hass)
