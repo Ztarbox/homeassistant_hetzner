@@ -40,7 +40,6 @@
     },
     "error": {
       "api_key_required": "API-Schlüssel ist erforderlich",
-      "storage_box_id_required": "Eine Storage Box muss ausgewählt werden",
       "no_storage_boxes": "Für diesen API-Schlüssel wurden keine Storage Boxen gefunden",
       "invalid_selection": "Ungültige Storage-Box-Auswahl",
       "invalid_api_key": "Ungültiger API-Schlüssel",
@@ -72,13 +71,6 @@
         "mb": "Megabytes",
         "gb": "Gigabytes",
         "tb": "Terabytes"
-      }
-    }
-  },
-  "entity": {
-    "sensor": {
-      "storage_box_access_options": {
-        "name": "Storage Box {name} Zugriffsoptionen"
       }
     }
   }

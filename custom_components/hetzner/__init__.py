@@ -6,6 +6,7 @@ from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryError
 from homeassistant.helpers import entity_registry as er
 
 from .const import (
@@ -57,8 +58,8 @@ async def async_setup_entry(
     """Set up Hetzner from a config entry."""
     storage_box_id = config_entry.data.get(CONF_STORAGE_BOX_ID)
     if storage_box_id is None:
-        _LOGGER.error("No storage box id in config entry")
-        return False
+        # Shown as the reason in the UI; the entry has to be added again
+        raise ConfigEntryError("No storage box id in config entry")
 
     unit = config_entry.options.get(CONF_UNIT, DEFAULT_UNIT)
 

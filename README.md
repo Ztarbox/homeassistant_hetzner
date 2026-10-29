@@ -33,7 +33,7 @@ Perfect for monitoring your off-site backup space and add it to dashboards, auto
 ## Installation
 
 ### Installation through HACS
-The easiest way to install the Hetzer Storage Box integration is through HACS. 
+The easiest way to install the Hetzner Storage Box integration is through HACS. 
 
 1. Find the Hetzner Storage Box Integration in the Home Assistant Community Store [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Dixet&repository=homeassistant_hetzner&category=integration)
 2. Download the repository
@@ -100,7 +100,7 @@ The integration provides the following sensors:
 #### sensor.storage_box_&lt;boxname&gt;
 - **State**: The current status of the storage box
 - **Attributes**:
-  - `ID`: The id of your storage box
+  - `id`: The id of your storage box
   - `name`: The name of your storage box
   - `username`: The username of the storage box owner
   - `server`: FQDN of the Storage Box
@@ -108,19 +108,19 @@ The integration provides the following sensors:
   - `storage_box_type`: Type of storage box (subscription type)
   - `created`: When the storage box was first created
 
-#### sensor.storage_box_&lt;boxname&gt;
-- **State**: The current status of the storage box
-- **Attributes**:
-  - `ID`: unique location identifier
-  - `Country`: Country where the data is stored
-  - `City`: City where the data is stored
-  - `Latitude`: Latitude of the location
-  - `Longitude`: Longitude  of the location
-  - `Description`: Full name of the location
-
 #### sensor.storage_box_&lt;boxname&gt;_location
-- **State**: Location code for your storage box location
-- **Unit**: bytes
+- **State**: Name of the location where your storage box is hosted (for example `fsn1`)
+- **Attributes**:
+  - `id`: unique location identifier
+  - `country`: Country where the data is stored
+  - `city`: City where the data is stored
+  - `latitude`: Latitude of the location
+  - `longitude`: Longitude of the location
+  - `description`: Full name of the location
+
+#### sensor.storage_box_&lt;boxname&gt;_total_size
+- **State**: The total size of your storage box plan in the configured unit
+- **Unit**: User-selected unit (`B`, `MB`, `GB`, or `TB`)
 
 #### sensor.storage_box_&lt;boxname&gt;_total_used
 - **State**: The total used size in the configured unit

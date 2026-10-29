@@ -145,6 +145,7 @@ async def test_user_step_api_key_required(
         ({"status": 500}, "api_error"),
         ({"exc": asyncio.TimeoutError()}, "connection_timeout"),
         ({"exc": aiohttp.ClientError("boom")}, "validation_error"),
+        ({"exc": ValueError("boom")}, "validation_error"),
     ],
 )
 async def test_user_step_validation_errors(

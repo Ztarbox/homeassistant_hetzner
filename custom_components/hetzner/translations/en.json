@@ -40,7 +40,6 @@
     },
     "error": {
       "api_key_required": "API key is required",
-      "storage_box_id_required": "Storage Box is required",
       "no_storage_boxes": "No storage boxes found for this API key",
       "invalid_selection": "Invalid storage box selection",
       "invalid_api_key": "Invalid API key",
@@ -72,13 +71,6 @@
         "mb": "Megabytes",
         "gb": "Gigabytes",
         "tb": "Terabytes"
-      }
-    }
-  },
-  "entity": {
-    "sensor": {
-      "storage_box_access_options": {
-        "name": "Storage Box {name} Access Options"
       }
     }
   }

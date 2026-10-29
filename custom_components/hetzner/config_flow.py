@@ -1,7 +1,7 @@
 import asyncio
 import logging
 
-from aiohttp import ClientTimeout
+from aiohttp import ClientError, ClientTimeout
 from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.helpers import selector
@@ -121,9 +121,6 @@ class HetznerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=DATA_SCHEMA,
             errors=errors,
-            description_placeholders={
-                "api_key_info": "Your Hetzner Storage Box API key",
-            },
         )
 
     async def async_step_reauth(self, entry_data):
@@ -168,7 +165,8 @@ class HetznerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Validate API key by testing connection to Hetzner API.
 
         With a storage box id the key must also have access to that box.
-        Returns None if valid, or error string if invalid.
+        Returns None if valid, or error string if invalid. Failures are shown
+        in the form, so they are only logged at debug level.
         """
         url = f"https://{host}/v1/storage_boxes"
         if storage_box_id is not None:
@@ -185,27 +183,31 @@ class HetznerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 timeout=ClientTimeout(total=10),
             ) as resp:
                 if resp.status in (401, 403):
-                    _LOGGER.error("Invalid API key for Hetzner Storage Box")
+                    _LOGGER.debug("Invalid API key for Hetzner Storage Box")
                     return "invalid_api_key"
                 elif resp.status == 200:
                     _LOGGER.debug("API key validated successfully")
                     return None
                 elif resp.status == 404 and storage_box_id is not None:
-                    _LOGGER.error("Storage box %s not found", storage_box_id)
+                    _LOGGER.debug("Storage box %s not found", storage_box_id)
                     return "storage_box_not_found"
                 elif resp.status == 404:
-                    _LOGGER.error("Hetzner API endpoint not found")
+                    _LOGGER.debug("Hetzner API endpoint not found")
                     return "invalid_host"
                 else:
-                    _LOGGER.error(
-                        f"Unexpected response from Hetzner API: {resp.status}"
+                    _LOGGER.debug(
+                        "Unexpected response from Hetzner API: %s", resp.status
                     )
                     return "api_error"
         except asyncio.TimeoutError:
-            _LOGGER.error("Timeout connecting to Hetzner API")
+            _LOGGER.debug("Timeout connecting to Hetzner API")
             return "connection_timeout"
-        except Exception as e:
-            _LOGGER.error(f"Error validating API key: {e}")
+        except ClientError as err:
+            _LOGGER.debug("Error connecting to Hetzner API: %s", err)
+            return "validation_error"
+        except Exception:
+            # Unexpected, so keep the traceback visible
+            _LOGGER.exception("Unexpected error validating API key")
             return "validation_error"
 
     def _build_box_options(
@@ -300,9 +302,6 @@ class HetznerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 step_id="storage_box",
                 data_schema=vol.Schema({}),
                 errors=errors,
-                description_placeholders={
-                    "storage_box_info": "No storage boxes found for this account",
-                },
             )
 
         # Empty when the form without boxes is submitted to fetch them again
