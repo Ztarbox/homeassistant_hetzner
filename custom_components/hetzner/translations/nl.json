@@ -1,7 +1,8 @@
 {
   "config": {
     "abort": {
-      "already_configured": "Deze Storage Box is al geconfigureerd in Home Assistant."
+      "already_configured": "Deze Storage Box is al geconfigureerd in Home Assistant.",
+      "reauth_successful": "De API-token is bijgewerkt."
     },
     "step": {
       "user": {
@@ -18,6 +19,16 @@
         "data": {
           "storage_box_id": "Selecteer een opslagbox"
         }
+      },
+      "reauth_confirm": {
+        "title": "Hetzner Storage Box opnieuw authenticeren",
+        "description": "De Hetzner API heeft de API-token geweigerd. Voer een nieuwe token in van het project dat de opslagbox bevat.",
+        "data": {
+          "api_key": "API-sleutel"
+        },
+        "data_description": {
+          "api_key": "API-token uit de Hetzner Console (uw project → Security → API tokens). Leestoegang is voldoende."
+        }
       }
     },
     "error": {
@@ -28,7 +39,8 @@
       "invalid_api_key": "Ongeldige API-sleutel",
       "connection_timeout": "Verbindingstime-out",
       "api_error": "API-fout",
-      "validation_error": "Validatiefout"
+      "validation_error": "Validatiefout",
+      "storage_box_not_found": "Deze API-token heeft geen toegang tot de geconfigureerde opslagbox"
     }
   },
   "options": {

@@ -6,6 +6,7 @@ from typing import Any
 from aiohttp import ClientTimeout
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -24,6 +25,8 @@ class HetznerData:
 
     coordinator: HetznerDataUpdateCoordinator
     unit: str
+    # Compared by the update listener to reload after reauthentication
+    api_key: str
 
 
 class HetznerDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -56,6 +59,11 @@ class HetznerDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         async with session.get(
             url, headers=headers, timeout=ClientTimeout(total=10)
         ) as resp:
+            # Not retried: a revoked token or deleted box will not recover
+            if resp.status in (401, 403):
+                raise ConfigEntryAuthFailed(f"Invalid API key: {resp.status}")
+            if resp.status == 404:
+                raise ConfigEntryError(f"Storage box {self._storage_box_id} not found")
             if resp.status != 200:
                 raise UpdateFailed(f"Error fetching storage box data: {resp.status}")
             data = await resp.json()

@@ -129,27 +129,73 @@ class HetznerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             },
         )
 
-    async def _validate_api_key(self, api_key: str, host: str) -> str | None:
+    async def async_step_reauth(self, entry_data):
+        """Start reauthentication after the API rejected the key."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(self, user_input=None):
+        """Ask for a new API key and check it can still see the storage box."""
+        errors = {}
+
+        if user_input is not None:
+            reauth_entry = self._get_reauth_entry()
+            api_key = user_input.get(CONF_API_KEY, "").strip()
+            host = reauth_entry.data.get(CONF_HOST, DEFAULT_HOST)
+
+            if not api_key:
+                errors[CONF_API_KEY] = "api_key_required"
+            # Query the box itself: a key of another project is valid as well
+            elif validation_error := await self._validate_api_key(
+                api_key, host, reauth_entry.data[CONF_STORAGE_BOX_ID]
+            ):
+                errors[CONF_API_KEY] = validation_error
+            elif reauth_entry.state is config_entries.ConfigEntryState.LOADED:
+                # The update listener reloads the entry on a new key
+                return self.async_update_and_abort(
+                    reauth_entry, data_updates={CONF_API_KEY: api_key}
+                )
+            else:
+                return self.async_update_reload_and_abort(
+                    reauth_entry, data_updates={CONF_API_KEY: api_key}
+                )
+
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema({vol.Required(CONF_API_KEY): str}),
+            errors=errors,
+        )
+
+    async def _validate_api_key(
+        self, api_key: str, host: str, storage_box_id: str | None = None
+    ) -> str | None:
         """Validate API key by testing connection to Hetzner API.
 
+        With a storage box id the key must also have access to that box.
         Returns None if valid, or error string if invalid.
         """
+        url = f"https://{host}/v1/storage_boxes"
+        if storage_box_id is not None:
+            url = f"{url}/{storage_box_id}"
+
         try:
             session = async_get_clientsession(self.hass)
             headers = {"Authorization": f"Bearer {api_key}"}
 
             # Attempt a test API call to validate the key against Hetzner API
             async with session.get(
-                f"https://{host}/v1/storage_boxes",
+                url,
                 headers=headers,
                 timeout=ClientTimeout(total=10),
             ) as resp:
-                if resp.status == 401:
+                if resp.status in (401, 403):
                     _LOGGER.error("Invalid API key for Hetzner Storage Box")
                     return "invalid_api_key"
                 elif resp.status == 200:
                     _LOGGER.debug("API key validated successfully")
                     return None
+                elif resp.status == 404 and storage_box_id is not None:
+                    _LOGGER.error("Storage box %s not found", storage_box_id)
+                    return "storage_box_not_found"
                 elif resp.status == 404:
                     _LOGGER.error("Hetzner API endpoint not found")
                     return "invalid_host"

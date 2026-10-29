@@ -81,7 +81,11 @@ async def async_setup_entry(
     # ConfigEntryNotReady into a setup retry when raised from setup_entry
     await coordinator.async_config_entry_first_refresh()
 
-    config_entry.runtime_data = HetznerData(coordinator=coordinator, unit=unit)
+    config_entry.runtime_data = HetznerData(
+        coordinator=coordinator,
+        unit=unit,
+        api_key=config_entry.data[CONF_API_KEY],
+    )
 
     config_entry.async_on_unload(
         config_entry.add_update_listener(_async_update_listener)
@@ -144,14 +148,22 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
 async def _async_update_listener(
     hass: HomeAssistant, config_entry: HetznerConfigEntry
 ) -> None:
-    """Reload when the unit changed; setup renames the size sensor unique_ids."""
+    """Reload when the unit or API key changed.
+
+    Setup renames the size sensor unique_ids to a new unit; a new API key
+    comes from the reauth flow.
+    """
+    runtime_data = config_entry.runtime_data
     new_unit = config_entry.options.get(
         CONF_UNIT,
         config_entry.data.get(CONF_UNIT, DEFAULT_UNIT),
     )
 
     # HA also calls the listener for title or system option changes
-    if new_unit.upper() == config_entry.runtime_data.unit.upper():
+    if (
+        new_unit.upper() == runtime_data.unit.upper()
+        and config_entry.data[CONF_API_KEY] == runtime_data.api_key
+    ):
         return
 
     await hass.config_entries.async_reload(config_entry.entry_id)

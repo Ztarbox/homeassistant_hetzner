@@ -385,7 +385,6 @@ async def test_missing_storage_box_key(
     "mock_kwargs",
     [
         {"status": 500},
-        {"status": 401},
         {"exc": asyncio.TimeoutError},
         {"exc": aiohttp.ClientError},
     ],
@@ -435,7 +434,6 @@ async def test_first_refresh_error_recovers_on_retry(
     "mock_kwargs",
     [
         {"status": 500},
-        {"status": 401},
         {"exc": asyncio.TimeoutError},
         {"exc": aiohttp.ClientError},
     ],
@@ -470,6 +468,73 @@ async def test_later_refresh_error_and_recovery(
         state = hass.states.get(entity_id)
         assert state is not None
         assert state.state != STATE_UNAVAILABLE, entity_id
+
+
+def _reauth_flows(hass: HomeAssistant) -> list[Any]:
+    """Return the reauth flows in progress for the integration."""
+    return [
+        flow
+        for flow in hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+        if flow["context"]["source"] == "reauth"
+    ]
+
+
+@pytest.mark.parametrize("status", [401, 403])
+async def test_first_refresh_auth_failed(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    storage_box: dict[str, Any],
+    status: int,
+) -> None:
+    """A rejected API key fails setup without retrying and starts reauth."""
+    aioclient_mock.get(BOX_URL, json={"storage_box": storage_box}, status=status)
+    await _setup(hass, config_entry)
+
+    assert config_entry.state is ConfigEntryState.SETUP_ERROR
+    assert aioclient_mock.call_count == 1
+    assert hass.states.async_entity_ids("sensor") == []
+    flows = _reauth_flows(hass)
+    assert len(flows) == 1
+    assert flows[0]["step_id"] == "reauth_confirm"
+    assert flows[0]["context"]["entry_id"] == config_entry.entry_id
+
+
+async def test_first_refresh_storage_box_not_found(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+) -> None:
+    """A deleted storage box fails setup without retrying or reauth."""
+    aioclient_mock.get(BOX_URL, status=404)
+    await _setup(hass, config_entry)
+
+    assert config_entry.state is ConfigEntryState.SETUP_ERROR
+    assert config_entry.reason == f"Storage box {STORAGE_BOX_ID} not found"
+    assert aioclient_mock.call_count == 1
+    assert _reauth_flows(hass) == []
+    assert hass.states.async_entity_ids("sensor") == []
+
+
+async def test_later_refresh_auth_failed(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    storage_box: dict[str, Any],
+) -> None:
+    """A key rejected after setup makes entities unavailable and starts reauth."""
+    _mock_box(aioclient_mock, storage_box)
+    await _setup(hass, config_entry)
+    assert _reauth_flows(hass) == []
+
+    _mock_box(aioclient_mock, storage_box, status=401)
+    await _tick(hass)
+
+    for entity_id in EXPECTED_ENTITIES:
+        state = hass.states.get(entity_id)
+        assert state is not None
+        assert state.state == STATE_UNAVAILABLE, entity_id
+    assert len(_reauth_flows(hass)) == 1
 
 
 async def test_missing_storage_box_id(

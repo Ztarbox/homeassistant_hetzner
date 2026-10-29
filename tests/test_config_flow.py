@@ -32,7 +32,7 @@ from custom_components.hetzner.const import (
     DOMAIN,
 )
 
-from tests.conftest import API_KEY, LIST_URL, STORAGE_BOX_ID
+from tests.conftest import API_KEY, BOX_URL, LIST_URL, STORAGE_BOX_ID
 
 BOX_DESCRIPTION = f"backup (ID: {STORAGE_BOX_ID}, Status: active, Type: bx11, BX11)"
 BOX_OPTION = {"value": STORAGE_BOX_ID, "label": BOX_DESCRIPTION}
@@ -111,6 +111,7 @@ async def test_user_step_api_key_required(
     ("response", "error"),
     [
         ({"status": 401}, "invalid_api_key"),
+        ({"status": 403}, "invalid_api_key"),
         ({"status": 404}, "invalid_host"),
         ({"status": 500}, "api_error"),
         ({"exc": asyncio.TimeoutError()}, "connection_timeout"),
@@ -400,3 +401,120 @@ async def test_user_step_unit_defaults(
         await hass.async_block_till_done()
 
     assert result["data"][CONF_UNIT] == DEFAULT_UNIT
+
+
+async def test_reauth_flow_updates_api_key(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+) -> None:
+    """Test a valid new key is stored and the not loaded entry reloaded."""
+    aioclient_mock.get(BOX_URL, json={"storage_box": {}})
+
+    result = await config_entry.start_reauth_flow(hass)
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reauth_confirm"
+
+    with patch(
+        "custom_components.hetzner.async_setup_entry", return_value=True
+    ) as setup:
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_API_KEY: " new-key "}
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert config_entry.data[CONF_API_KEY] == "new-key"
+    assert config_entry.data[CONF_STORAGE_BOX_ID] == STORAGE_BOX_ID
+    assert config_entry.data[CONF_UNIT] == "GB"
+    assert len(setup.mock_calls) == 1
+    assert aioclient_mock.call_count == 1
+    _, url, _, headers = aioclient_mock.mock_calls[0]
+    assert str(url) == BOX_URL
+    assert headers == {"Authorization": "Bearer new-key"}
+
+
+async def test_reauth_flow_loaded_entry_reloads_with_new_key(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    storage_box: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test reauth of a running entry reloads it through the update listener."""
+    aioclient_mock.get(BOX_URL, json={"storage_box": storage_box})
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(BOX_URL, status=401)
+    await config_entry.runtime_data.coordinator.async_refresh()
+    await hass.async_block_till_done()
+    flows = hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+    assert len(flows) == 1
+    assert config_entry.state is config_entries.ConfigEntryState.LOADED
+
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(BOX_URL, json={"storage_box": storage_box})
+    result = await hass.config_entries.flow.async_configure(
+        flows[0]["flow_id"], {CONF_API_KEY: "new-key"}
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert config_entry.state is config_entries.ConfigEntryState.LOADED
+    assert config_entry.runtime_data.api_key == "new-key"
+    # Reauth check plus the first refresh after the reload, both with the new key
+    assert aioclient_mock.call_count == 2
+    for _, _, _, headers in aioclient_mock.mock_calls:
+        assert headers == {"Authorization": "Bearer new-key"}
+    assert "update listener" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("api_key", "response", "error"),
+    [
+        ("  ", None, "api_key_required"),
+        ("new-key", {"status": 401}, "invalid_api_key"),
+        ("new-key", {"status": 403}, "invalid_api_key"),
+        ("new-key", {"status": 404}, "storage_box_not_found"),
+        ("new-key", {"status": 500}, "api_error"),
+        ("new-key", {"exc": asyncio.TimeoutError()}, "connection_timeout"),
+        ("new-key", {"exc": aiohttp.ClientError("boom")}, "validation_error"),
+    ],
+)
+async def test_reauth_flow_errors_recover(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    api_key: str,
+    response: dict[str, Any] | None,
+    error: str,
+) -> None:
+    """Test a rejected key shows an error and a valid key then finishes."""
+    if response is not None:
+        aioclient_mock.get(BOX_URL, **response)
+
+    result = await config_entry.start_reauth_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_API_KEY: api_key}
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reauth_confirm"
+    assert result["errors"] == {CONF_API_KEY: error}
+    assert config_entry.data[CONF_API_KEY] == API_KEY
+
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(BOX_URL, json={"storage_box": {}})
+    with patch("custom_components.hetzner.async_setup_entry", return_value=True):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_API_KEY: "new-key"}
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert config_entry.data[CONF_API_KEY] == "new-key"
