@@ -1,6 +1,7 @@
 {
   "domain": "hetzner",
   "name": "Hetzner Storage Box",
+  "categories": ["computers_network.cloud_developer_tools"],
   "codeowners": ["@Dixet"],
   "config_flow": true,
   "dependencies": [],
