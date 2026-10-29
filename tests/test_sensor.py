@@ -406,7 +406,7 @@ async def test_first_refresh_error(
 
     assert config_entry.state is ConfigEntryState.SETUP_RETRY
     assert aioclient_mock.call_count == 1
-    assert config_entry.entry_id not in hass.data.get(DOMAIN, {})
+    assert not hasattr(config_entry, "runtime_data")
     assert hass.states.async_entity_ids("sensor") == []
     ent_reg = er.async_get(hass)
     assert er.async_entries_for_config_entry(ent_reg, config_entry.entry_id) == []
@@ -483,7 +483,7 @@ async def test_missing_storage_box_id(
         await _setup(hass, entry)
 
     assert entry.state is ConfigEntryState.SETUP_ERROR
-    assert entry.entry_id not in hass.data.get(DOMAIN, {})
+    assert not hasattr(entry, "runtime_data")
     assert "No storage box id in config entry" in caplog.text
     assert aioclient_mock.call_count == 0
     assert hass.states.async_entity_ids("sensor") == []
@@ -500,13 +500,13 @@ async def test_unload_entry(
     """Unloading the entry removes its data and makes entities unavailable."""
     _mock_box(aioclient_mock, storage_box)
     await _setup(hass, config_entry)
-    assert config_entry.entry_id in hass.data[DOMAIN]
+    assert config_entry.runtime_data.coordinator.data == storage_box
 
     assert await hass.config_entries.async_unload(config_entry.entry_id)
     await hass.async_block_till_done()
 
     assert config_entry.state is ConfigEntryState.NOT_LOADED
-    assert config_entry.entry_id not in hass.data[DOMAIN]
+    assert not hasattr(config_entry, "runtime_data")
     state = hass.states.get(PREFIX)
     assert state is not None
     assert state.state == STATE_UNAVAILABLE

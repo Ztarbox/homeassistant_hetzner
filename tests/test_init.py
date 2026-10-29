@@ -26,7 +26,6 @@ from custom_components.hetzner.const import (
     CONF_HOST,
     CONF_STORAGE_BOX_ID,
     CONF_UNIT,
-    DATA_COORDINATOR,
     DEFAULT_HOST,
     DOMAIN,
 )
@@ -101,28 +100,27 @@ async def test_setup_and_unload(
     config_entry: MockConfigEntry,
     storage_box: dict[str, Any],
 ) -> None:
-    """Setup stores entry data in hass.data, unload removes it."""
+    """Setup stores the runtime data on the entry, unload removes it."""
     _mock_box(aioclient_mock, storage_box)
     await _setup(hass, config_entry)
 
     assert config_entry.state is ConfigEntryState.LOADED
-    entry_data = dict(hass.data[DOMAIN][config_entry.entry_id])
-    coordinator = entry_data.pop(DATA_COORDINATOR)
+    runtime_data = config_entry.runtime_data
+    assert runtime_data.unit == "GB"
+    coordinator = runtime_data.coordinator
     assert isinstance(coordinator, HetznerDataUpdateCoordinator)
     assert coordinator.config_entry is not None
     assert coordinator.config_entry.entry_id == config_entry.entry_id
     assert coordinator.data == storage_box
-    assert entry_data == {
-        CONF_API_KEY: API_KEY,
-        CONF_HOST: DEFAULT_HOST,
-        CONF_UNIT: "GB",
-    }
+    _, url, _, headers = aioclient_mock.mock_calls[0]
+    assert str(url).startswith(f"https://{DEFAULT_HOST}/")
+    assert headers["Authorization"] == f"Bearer {API_KEY}"
 
     assert await hass.config_entries.async_unload(config_entry.entry_id)
     await hass.async_block_till_done()
 
     assert config_entry.state is ConfigEntryState.NOT_LOADED
-    assert config_entry.entry_id not in hass.data[DOMAIN]
+    assert not hasattr(config_entry, "runtime_data")
 
 
 async def test_setup_options_unit_overrides_data(
@@ -135,7 +133,7 @@ async def test_setup_options_unit_overrides_data(
     entry = _make_entry(hass, 3, unit="GB", options={CONF_UNIT: "TB"})
     await _setup(hass, entry)
 
-    assert hass.data[DOMAIN][entry.entry_id][CONF_UNIT] == "TB"
+    assert entry.runtime_data.unit == "TB"
     assert set(_size_entities(hass, entry)) == set(METRICS)
     for reg in _size_entities(hass, entry).values():
         assert str(reg.unique_id).endswith("_tb")
@@ -156,7 +154,7 @@ async def test_unload_failure_keeps_data(
     ):
         assert not await async_unload_entry(hass, config_entry)
 
-    assert config_entry.entry_id in hass.data[DOMAIN]
+    assert hasattr(config_entry, "runtime_data")
 
     assert await hass.config_entries.async_unload(config_entry.entry_id)
     await hass.async_block_till_done()
@@ -305,7 +303,7 @@ async def test_options_change_renames_and_reloads(
     assert config_entry.state is ConfigEntryState.LOADED
     # Reload fetched the API again
     assert aioclient_mock.call_count > calls_before
-    assert hass.data[DOMAIN][config_entry.entry_id][CONF_UNIT] == "TB"
+    assert config_entry.runtime_data.unit == "TB"
     assert registry.async_get_entity_id("sensor", DOMAIN, PREFIX) == status_id
 
     after = _size_entities(hass, config_entry)

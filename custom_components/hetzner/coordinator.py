@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import timedelta
 import logging
 from typing import Any
@@ -14,6 +15,16 @@ _LOGGER = logging.getLogger(__name__)
 
 SCAN_INTERVAL = timedelta(seconds=600)  # update every 10 minutes
 
+type HetznerConfigEntry = ConfigEntry[HetznerData]
+
+
+@dataclass
+class HetznerData:
+    """Runtime data of a loaded config entry."""
+
+    coordinator: HetznerDataUpdateCoordinator
+    unit: str
+
 
 class HetznerDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Fetch storage box info and stats for one config entry."""
@@ -21,7 +32,7 @@ class HetznerDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def __init__(
         self,
         hass: HomeAssistant,
-        config_entry: ConfigEntry,
+        config_entry: HetznerConfigEntry,
         api_key: str,
         host: str,
         storage_box_id: str,

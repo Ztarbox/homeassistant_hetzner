@@ -5,18 +5,11 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import (
-    CONF_STORAGE_BOX_ID,
-    CONF_UNIT,
-    DATA_COORDINATOR,
-    DEFAULT_UNIT,
-    DOMAIN,
-)
-from .coordinator import HetznerDataUpdateCoordinator
+from .const import CONF_STORAGE_BOX_ID, DOMAIN
+from .coordinator import HetznerConfigEntry, HetznerDataUpdateCoordinator
 from .entity import HetznerEntity
 
 _LOGGER = logging.getLogger(__name__)
@@ -24,18 +17,17 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    config_entry: ConfigEntry,
+    config_entry: HetznerConfigEntry,
     async_add_entities: AddEntitiesCallback,
     discovery_info=None,
 ) -> None:
     """Set up sensors for Hetzner Storage Box using the entry's coordinator."""
-    entry_data = hass.data[DOMAIN][config_entry.entry_id]
     # Presence checked in __init__.async_setup_entry
     storage_box_id = config_entry.data[CONF_STORAGE_BOX_ID]
-    display_unit = entry_data.get(CONF_UNIT, DEFAULT_UNIT)
+    display_unit = config_entry.runtime_data.unit
 
     # Already refreshed in __init__.async_setup_entry
-    coordinator = entry_data[DATA_COORDINATOR]
+    coordinator = config_entry.runtime_data.coordinator
 
     # Create entities: status, location, access options, total size, used size, data size, snapshot size, free space
     entities = [

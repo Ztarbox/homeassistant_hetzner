@@ -13,13 +13,12 @@ from .const import (
     CONF_HOST,
     CONF_STORAGE_BOX_ID,
     CONF_UNIT,
-    DATA_COORDINATOR,
     DEFAULT_HOST,
     DEFAULT_UNIT,
     DOMAIN,
     UNIT_OPTIONS,
 )
-from .coordinator import HetznerDataUpdateCoordinator
+from .coordinator import HetznerConfigEntry, HetznerData, HetznerDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -52,42 +51,37 @@ def _update_sensor_unit_options(
         )
 
 
-async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
+async def async_setup_entry(
+    hass: HomeAssistant, config_entry: HetznerConfigEntry
+) -> bool:
     """Set up Hetzner from a config entry."""
-    hass.data.setdefault(DOMAIN, {})
-
-    entry_data = {
-        CONF_API_KEY: config_entry.data.get(CONF_API_KEY),
-        CONF_HOST: config_entry.data.get(CONF_HOST, DEFAULT_HOST),
-        CONF_UNIT: config_entry.options.get(
-            CONF_UNIT,
-            config_entry.data.get(CONF_UNIT, DEFAULT_UNIT),
-        ),
-    }
-
     storage_box_id = config_entry.data.get(CONF_STORAGE_BOX_ID)
     if storage_box_id is None:
         _LOGGER.error("No storage box id in config entry")
         return False
 
+    unit = config_entry.options.get(
+        CONF_UNIT,
+        config_entry.data.get(CONF_UNIT, DEFAULT_UNIT),
+    )
+
     # Done on every setup, not only in the update listener: the unit can be
     # changed in the options flow while the entry waits for a setup retry,
     # when no listener is registered
-    await _async_align_size_unique_ids(hass, config_entry, entry_data[CONF_UNIT])
+    await _async_align_size_unique_ids(hass, config_entry, unit)
 
     coordinator = HetznerDataUpdateCoordinator(
         hass,
         config_entry,
-        entry_data[CONF_API_KEY],
-        entry_data[CONF_HOST],
+        config_entry.data[CONF_API_KEY],
+        config_entry.data.get(CONF_HOST, DEFAULT_HOST),
         storage_box_id,
     )
     # Refresh here rather than in the platform: HA only turns
     # ConfigEntryNotReady into a setup retry when raised from setup_entry
     await coordinator.async_config_entry_first_refresh()
-    entry_data[DATA_COORDINATOR] = coordinator
 
-    hass.data[DOMAIN][config_entry.entry_id] = entry_data
+    config_entry.runtime_data = HetznerData(coordinator=coordinator, unit=unit)
 
     config_entry.async_on_unload(
         config_entry.add_update_listener(_async_update_listener)
@@ -97,17 +91,11 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     return True
 
 
-async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
+async def async_unload_entry(
+    hass: HomeAssistant, config_entry: HetznerConfigEntry
+) -> bool:
     """Unload a config entry."""
-    unload_ok = await hass.config_entries.async_unload_platforms(
-        config_entry,
-        PLATFORMS,
-    )
-
-    if unload_ok:
-        hass.data.get(DOMAIN, {}).pop(config_entry.entry_id, None)
-
-    return unload_ok
+    return await hass.config_entries.async_unload_platforms(config_entry, PLATFORMS)
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
@@ -154,26 +142,23 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
 
 
 async def _async_update_listener(
-    hass: HomeAssistant, config_entry: ConfigEntry
+    hass: HomeAssistant, config_entry: HetznerConfigEntry
 ) -> None:
     """Reload when the unit changed; setup renames the size sensor unique_ids."""
     new_unit = config_entry.options.get(
         CONF_UNIT,
         config_entry.data.get(CONF_UNIT, DEFAULT_UNIT),
     )
-    loaded_unit = (
-        hass.data.get(DOMAIN, {}).get(config_entry.entry_id, {}).get(CONF_UNIT)
-    )
 
     # HA also calls the listener for title or system option changes
-    if loaded_unit is not None and new_unit.upper() == loaded_unit.upper():
+    if new_unit.upper() == config_entry.runtime_data.unit.upper():
         return
 
     await hass.config_entries.async_reload(config_entry.entry_id)
 
 
 async def _async_align_size_unique_ids(
-    hass: HomeAssistant, config_entry: ConfigEntry, unit: str
+    hass: HomeAssistant, config_entry: HetznerConfigEntry, unit: str
 ) -> None:
     """Rename size sensor unique_ids to the unit and reset their unit options."""
     unit = unit.upper()
