@@ -12,10 +12,13 @@
   - [Installation through HACS](#installation-through-hacs)
   - [Manual Installation](#manual-installation)
 - [Configuration](#configuration)
+  - [Prerequisites: Obtaining an API Key](#prerequisites-obtaining-an-api-key)
   - [Setup via Configuration Flow](#setup-via-configuration-flow)
-  - [Obtaining an API Key](#obtaining-an-api-key)
+  - [Changing the Unit](#changing-the-unit)
+  - [Replacing the API Key](#replacing-the-api-key)
 - [Sensors and Attributes](#sensors-and-attributes)
 - [Update Interval](#update-interval)
+- [Removing the Integration](#removing-the-integration)
 - [Development](#development)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -51,28 +54,43 @@ home-assistant/
 ├── configuration.yaml
 ├── custom_components/
 │   └── hetzner/
+│       ├── brand/
 │       ├── __init__.py
-│       ├── sensor.py
 │       ├── config_flow.py
+│       ├── const.py
+│       ├── coordinator.py
+│       ├── entity.py
 │       ├── manifest.json
-│       └── icon.png
+│       ├── sensor.py
+│       ├── strings.json
+│       └── translations/
 ```
 
 ## Configuration
 
+### Prerequisites: Obtaining an API Key
+
+You need a Hetzner account with at least one Storage Box and an API key of the project that contains it.
+To obtain one, sign in into the [Hetzner Console](https://console.hetzner.com) and choose a Project, go to Security → API Tokens, and generate a new token. Read access is enough. Make sure to copy the token because it won’t be shown to you again.
+
 ### Setup via Configuration Flow
 [![Start Config Flow](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start?domain=hetzner)
 1. In Home Assistant, navigate to **Settings** > **Devices & Services**
-2. Click **Add Integration** and search for "Hetzner" 
+2. Click **Add Integration** and search for "Hetzner"
 3. Enter your API key when prompted
 4. Select the desired unit of measurement (`B`, `MB`, `GB`, or `TB`). The default is `B`.
-4. Select the Storage Box you would like to configure
-5. Complete the configuration flow
+5. Select the Storage Box you would like to configure
+6. Complete the configuration flow
 
-### Obtaining an API Key
+To monitor more than one Storage Box, add the integration once per box.
 
-To use this integration, you need an API key from Hetzner. 
-To obtain one, sign in into the [Hetzner Console](https://console.hetzner.com) and choose a Project, go to Security → API Tokens, and generate a new token. Make sure to copy the token because it won’t be shown to you again. 
+### Changing the Unit
+
+Open **Settings** > **Devices & Services** > **Hetzner Storage Box**, click **Configure** and select a new unit. The size sensors keep their entity IDs.
+
+### Replacing the API Key
+
+If the Hetzner API rejects the API key, for example because the token was revoked, Home Assistant shows a **Reauthenticate** notice for the integration. Follow it and enter a new API key of the same project.
 
 
 ## Sensors and Attributes
@@ -134,6 +152,13 @@ The integration provides the following sensors:
 ## Update Interval
 
 All sensors are automatically updated every 10 minutes to fetch the latest status of your Storage Box.
+
+## Removing the Integration
+
+1. In Home Assistant, navigate to **Settings** > **Devices & Services** > **Hetzner Storage Box**
+2. Open the three-dot menu of each configured Storage Box and select **Delete**
+3. To uninstall the files as well, remove the integration in HACS (or delete `custom_components/hetzner` for a manual installation) and restart Home Assistant
+4. Optionally, revoke the API token in the [Hetzner Console](https://console.hetzner.com) under your project → Security → API Tokens
 
 ## Development
 

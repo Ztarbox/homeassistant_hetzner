@@ -20,18 +20,19 @@ CI (`.github/workflows/`) runs pytest, black, isort, flake8, mypy separately, pl
 
 ## Architecture
 
-- `config_flow.py`: user step (API key → validate → fetch storage boxes → pick box + display unit) and an `OptionsFlow` to change the unit later. `VERSION = 3`.
-- `__init__.py`: stores api key/host/unit per entry in `hass.data[DOMAIN][entry_id]` (unit prefers `options` over `data`), creates the coordinator and runs its first refresh (so API errors put the entry into setup retry; raising `ConfigEntryNotReady` from a forwarded platform would only be logged), forwards to the `sensor` platform, and registers an update listener.
-- `coordinator.py`: `HetznerDataUpdateCoordinator`, one per config entry (10-minute poll), stored under `hass.data[DOMAIN][entry_id]["coordinator"]`.
-- `sensor.py`: entities sharing the coordinator: status, location, access options, and five `HetznerSizeSensor`s (`total`, `used`, `data`, `snapshots`, `free`). API values are bytes; `HetznerSizeSensor` converts to the selected display unit.
+- `config_flow.py`: user step (API key → validate → fetch storage boxes → pick box + display unit), a reauth step (new API key, checked with `GET /v1/storage_boxes/{id}`) and an `OptionsFlow` to change the unit later. Connection data goes to `entry.data`, the unit to `entry.options`. `VERSION = 4`.
+- `__init__.py`: creates the coordinator and runs its first refresh (so API errors put the entry into setup retry; raising `ConfigEntryNotReady` from a forwarded platform would only be logged), stores `HetznerData(coordinator, unit)` in `entry.runtime_data` (typed as `HetznerConfigEntry`), forwards to the `sensor` platform, and registers an update listener.
+- `coordinator.py`: `HetznerDataUpdateCoordinator`, one per config entry (10-minute poll), plus `HetznerData`/`HetznerConfigEntry`. 401/403 raise `ConfigEntryAuthFailed` (starts reauth, polling stops), 404 raises `ConfigEntryError` (box deleted), other errors `UpdateFailed` (retry).
+- `entity.py`: `HetznerEntity` base class (coordinator entity, device info, `has_entity_name`).
+- `sensor.py`: `SensorEntity` subclasses of `HetznerEntity` sharing the coordinator: status, location, access options, and five `HetznerSizeSensor`s (`total`, `used`, `data`, `snapshots`, `free`). API values are bytes; `HetznerSizeSensor` converts to the selected display unit.
 
 ### Unit changes and unique_id migration (non-obvious)
 
 Size sensors embed the unit in their unique_id: `hetzner_storage_box_<id>_<metric>_<unit_lower>` (legacy, pre-unit format: `..._<metric>`). Consequences:
 
-- `async_migrate_entry` appends the unit to legacy unique_ids and bumps the entry to version 3 (config flow `VERSION` must stay in step with this).
+- `async_migrate_entry` appends the unit to legacy unique_ids (v1), moves the unit from `data` to `options` (≤ v3; an existing options unit wins) and bumps the entry to version 4 (config flow `VERSION` must stay in step with this).
 - `_async_align_size_unique_ids` runs on every `async_setup_entry` (so a unit changed while the entry waits for a setup retry is still applied): it renames size-sensor unique_ids whose unit differs, updates the registry's `suggested_unit_of_measurement` and clears user unit overrides (`_update_sensor_unit_options`) for those only.
-- `_async_update_listener` only reloads the entry when the unit actually changed; HA also fires it for title or system option changes.
+- `_async_update_listener` only reloads the entry when the unit or the API key (from reauth) actually changed; HA also fires it for title or system option changes. Reauth of a loaded entry therefore uses `async_update_and_abort` and leaves the reload to the listener (HA warns about `async_update_reload_and_abort` with a registered listener); a not loaded entry has no listener and is reloaded by the flow.
 - `_safe_update_unique_id` removes a conflicting stale registry entity before renaming.
 
 Unique_ids are parsed by splitting on `_`, so changing the ID format or metric names requires updating `SIZE_METRICS`/`VALID_UNITS` and the parsing in `__init__.py`.
