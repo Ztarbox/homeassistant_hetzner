@@ -1,37 +1,71 @@
-import asyncio
+from collections.abc import Mapping
 import logging
+from typing import TYPE_CHECKING, Any, TypedDict
 
-from aiohttp import ClientError, ClientTimeout
-from homeassistant import config_entries
-from homeassistant.core import callback
+from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.const import CONF_API_KEY, CONF_HOST
 from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-import voluptuous as vol
 
-from .const import (
-    CONF_API_KEY,
-    CONF_HOST,
-    CONF_STORAGE_BOX_ID,
-    CONF_UNIT,
-    DEFAULT_HOST,
-    DEFAULT_UNIT,
-    DOMAIN,
-    UNIT_OPTIONS,
+from .api import (
+    HetznerApiError,
+    HetznerAuthError,
+    HetznerClient,
+    HetznerConnectionError,
+    HetznerNotFoundError,
+    HetznerTimeoutError,
 )
+from .const import CONF_STORAGE_BOX_ID, CONFIG_ENTRY_VERSION, DEFAULT_HOST, DOMAIN
+
+if TYPE_CHECKING:
+    import probatio as vol
+else:
+    # Recent Home Assistant versions install probatio under this name; importing
+    # it as voluptuous keeps older Home Assistant versions working
+    import voluptuous as vol
 
 _LOGGER = logging.getLogger(__name__)
 
-DATA_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_API_KEY): str,
-        vol.Required(CONF_UNIT, default=DEFAULT_UNIT): selector.SelectSelector(
-            selector.SelectSelectorConfig(
-                options=UNIT_OPTIONS,
-                mode=selector.SelectSelectorMode.DROPDOWN,
-            )
-        ),
-    }
-)
+DATA_SCHEMA = vol.Schema({vol.Required(CONF_API_KEY): str})
+
+
+class StorageBoxInfo(TypedDict):
+    """Fields of a storage box shown in the selection dropdown."""
+
+    name: str | None
+    status: str | None
+    box_type: str | None
+    description: str | None
+
+
+def _error_key(err: Exception, storage_box_id: str | None = None) -> str:
+    """Map an API error to a form error key.
+
+    Expected failures are shown in the form, so they are only logged at
+    debug level.
+    """
+    if isinstance(err, HetznerAuthError):
+        _LOGGER.debug("Hetzner API rejected the API key: %s", err)
+        return "invalid_api_key"
+    if isinstance(err, HetznerNotFoundError):
+        if storage_box_id is not None:
+            _LOGGER.debug("Storage box %s not found", storage_box_id)
+            return "storage_box_not_found"
+        _LOGGER.debug("Hetzner API endpoint not found")
+        return "invalid_host"
+    if isinstance(err, HetznerTimeoutError):
+        _LOGGER.debug("Timeout connecting to Hetzner API")
+        return "connection_timeout"
+    if isinstance(err, HetznerConnectionError):
+        _LOGGER.debug("Error connecting to Hetzner API: %s", err)
+        return "validation_error"
+    if isinstance(err, HetznerApiError):
+        _LOGGER.debug("Unexpected response from Hetzner API: %s", err)
+        return "api_error"
+    # Unexpected, so keep the traceback visible
+    _LOGGER.error("Unexpected error calling the Hetzner API", exc_info=err)
+    return "validation_error"
+
 
 # Field key used for storage box selection; using the config constant
 # allows Home Assistant to look up a translation for this key under
@@ -56,49 +90,22 @@ def create_storage_box_schema(
     )
 
 
-class HetznerOptionsFlow(config_entries.OptionsFlow):
-
-    async def async_step_init(self, user_input=None):
-        if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
-
-        current_unit = self.config_entry.options.get(CONF_UNIT, DEFAULT_UNIT)
-
-        return self.async_show_form(
-            step_id="init",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(
-                        CONF_UNIT, default=current_unit
-                    ): selector.SelectSelector(
-                        selector.SelectSelectorConfig(
-                            options=UNIT_OPTIONS,
-                            mode=selector.SelectSelectorMode.DROPDOWN,
-                        )
-                    )
-                }
-            ),
-        )
-
-
-class HetznerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+class HetznerConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Hetzner Storage Box."""
 
-    VERSION = 4
+    VERSION = CONFIG_ENTRY_VERSION
 
-    @staticmethod
-    @callback
-    def async_get_options_flow(config_entry):
-        return HetznerOptionsFlow()
+    data: dict[str, Any]
 
-    async def async_step_user(self, user_input=None):
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Handle the initial step - Ask for API key."""
-        errors = {}
+        errors: dict[str, str] = {}
 
         if user_input is not None:
             api_key = user_input.get(CONF_API_KEY, "").strip()
             host = DEFAULT_HOST
-            unit = user_input.get(CONF_UNIT, DEFAULT_UNIT)
 
             # Validate the API key is not empty
             if not api_key:
@@ -113,7 +120,6 @@ class HetznerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     self.data = {
                         CONF_API_KEY: api_key,
                         CONF_HOST: host,
-                        CONF_UNIT: unit,
                     }
                     return await self.async_step_storage_box()
 
@@ -123,13 +129,17 @@ class HetznerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def async_step_reauth(self, entry_data):
+    async def async_step_reauth(
+        self, entry_data: Mapping[str, Any]
+    ) -> ConfigFlowResult:
         """Start reauthentication after the API rejected the key."""
         return await self.async_step_reauth_confirm()
 
-    async def async_step_reauth_confirm(self, user_input=None):
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Ask for a new API key and check it can still see the storage box."""
-        errors = {}
+        errors: dict[str, str] = {}
 
         if user_input is not None:
             reauth_entry = self._get_reauth_entry()
@@ -143,12 +153,9 @@ class HetznerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 api_key, host, reauth_entry.data[CONF_STORAGE_BOX_ID]
             ):
                 errors[CONF_API_KEY] = validation_error
-            elif reauth_entry.state is config_entries.ConfigEntryState.LOADED:
-                # The update listener reloads the entry on a new key
-                return self.async_update_and_abort(
-                    reauth_entry, data_updates={CONF_API_KEY: api_key}
-                )
             else:
+                # Reloads a loaded entry and sets up one that failed with the
+                # rejected key
                 return self.async_update_reload_and_abort(
                     reauth_entry, data_updates={CONF_API_KEY: api_key}
                 )
@@ -159,59 +166,31 @@ class HetznerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    def _client(self, api_key: str, host: str) -> HetznerClient:
+        """Return an API client using Home Assistant's shared session."""
+        return HetznerClient(async_get_clientsession(self.hass), api_key, host)
+
     async def _validate_api_key(
         self, api_key: str, host: str, storage_box_id: str | None = None
     ) -> str | None:
         """Validate API key by testing connection to Hetzner API.
 
         With a storage box id the key must also have access to that box.
-        Returns None if valid, or error string if invalid. Failures are shown
-        in the form, so they are only logged at debug level.
+        Returns None if valid, or error string if invalid.
         """
-        url = f"https://{host}/v1/storage_boxes"
-        if storage_box_id is not None:
-            url = f"{url}/{storage_box_id}"
-
+        client = self._client(api_key, host)
         try:
-            session = async_get_clientsession(self.hass)
-            headers = {"Authorization": f"Bearer {api_key}"}
-
-            # Attempt a test API call to validate the key against Hetzner API
-            async with session.get(
-                url,
-                headers=headers,
-                timeout=ClientTimeout(total=10),
-            ) as resp:
-                if resp.status in (401, 403):
-                    _LOGGER.debug("Invalid API key for Hetzner Storage Box")
-                    return "invalid_api_key"
-                elif resp.status == 200:
-                    _LOGGER.debug("API key validated successfully")
-                    return None
-                elif resp.status == 404 and storage_box_id is not None:
-                    _LOGGER.debug("Storage box %s not found", storage_box_id)
-                    return "storage_box_not_found"
-                elif resp.status == 404:
-                    _LOGGER.debug("Hetzner API endpoint not found")
-                    return "invalid_host"
-                else:
-                    _LOGGER.debug(
-                        "Unexpected response from Hetzner API: %s", resp.status
-                    )
-                    return "api_error"
-        except asyncio.TimeoutError:
-            _LOGGER.debug("Timeout connecting to Hetzner API")
-            return "connection_timeout"
-        except ClientError as err:
-            _LOGGER.debug("Error connecting to Hetzner API: %s", err)
-            return "validation_error"
-        except Exception:
-            # Unexpected, so keep the traceback visible
-            _LOGGER.exception("Unexpected error validating API key")
-            return "validation_error"
+            if storage_box_id is None:
+                await client.async_list_storage_boxes()
+            else:
+                await client.async_get_storage_box(storage_box_id)
+        except Exception as err:  # noqa: BLE001
+            return _error_key(err, storage_box_id)
+        _LOGGER.debug("API key validated successfully")
+        return None
 
     def _build_box_options(
-        self, storage_boxes: dict
+        self, storage_boxes: dict[str, StorageBoxInfo]
     ) -> list[selector.SelectOptionDict]:
         """Build dropdown options for the storage boxes.
 
@@ -229,7 +208,7 @@ class HetznerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         ]
 
     @staticmethod
-    def _box_label(box_id: str, box_info: dict) -> str:
+    def _box_label(box_id: str, box_info: StorageBoxInfo) -> str:
         """Format a dropdown label, leaving out fields the API did not return."""
         details = [f"ID: {box_id}"]
         if box_info["status"]:
@@ -244,60 +223,45 @@ class HetznerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return f"{box_info['name']} ({', '.join(details)})"
         return ", ".join(details)
 
-    async def _fetch_storage_boxes(self, api_key: str, host: str) -> dict:
+    async def _fetch_storage_boxes(
+        self, api_key: str, host: str
+    ) -> dict[str, StorageBoxInfo]:
         """Fetch list of available storage boxes from Hetzner API.
 
-        Returns a dict mapping storage box ID (as string) to info dict with:
-        - name: storage box name
-        - status: storage box status
-        - box_type: storage box type name
-        - description: storage box type description
+        Returns a dict mapping storage box ID (as string) to its name, status,
+        type name and type description. API errors are raised.
         """
-        try:
-            session = async_get_clientsession(self.hass)
-            headers = {"Authorization": f"Bearer {api_key}"}
+        storage_boxes: dict[str, StorageBoxInfo] = {}
+        for box in await self._client(api_key, host).async_list_storage_boxes():
+            box_type = box.get("storage_box_type") or {}
+            storage_boxes[str(box.get("id"))] = {
+                "name": box.get("name"),
+                "status": box.get("status"),
+                "box_type": box_type.get("name"),
+                "description": box_type.get("description"),
+            }
+        return storage_boxes
 
-            async with session.get(
-                f"https://{host}/v1/storage_boxes",
-                headers=headers,
-                timeout=ClientTimeout(total=10),
-            ) as resp:
-                if resp.status != 200:
-                    _LOGGER.error("Error fetching storage boxes: %s", resp.status)
-                    return {}
-
-                data = await resp.json()
-                storage_boxes = {}
-
-                for box in data.get("storage_boxes", []):
-                    box_id = str(box.get("id"))
-                    box_type = box.get("storage_box_type") or {}
-                    storage_boxes[box_id] = {
-                        "name": box.get("name"),
-                        "status": box.get("status"),
-                        "box_type": box_type.get("name"),
-                        "description": box_type.get("description"),
-                    }
-
-                return storage_boxes
-        except asyncio.TimeoutError:
-            _LOGGER.error("Timeout fetching storage boxes")
-            return {}
-        except Exception as e:
-            _LOGGER.error("Error fetching storage boxes: %s", e)
-            return {}
-
-    async def async_step_storage_box(self, user_input=None):
+    async def async_step_storage_box(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Handle the storage box selection step."""
-        errors = {}
+        errors: dict[str, str] = {}
 
-        # Fetch available storage boxes from API
-        storage_boxes = await self._fetch_storage_boxes(
-            self.data[CONF_API_KEY], self.data[CONF_HOST]
-        )
+        # Fetched on every submit, so the form without boxes retries
+        try:
+            storage_boxes = await self._fetch_storage_boxes(
+                self.data[CONF_API_KEY], self.data[CONF_HOST]
+            )
+        except Exception as err:  # noqa: BLE001
+            # Not "no_storage_boxes": the key may well have boxes
+            errors["base"] = _error_key(err)
+            storage_boxes = {}
+        else:
+            if not storage_boxes:
+                errors["base"] = "no_storage_boxes"
 
         if not storage_boxes:
-            errors["base"] = "no_storage_boxes"
             return self.async_show_form(
                 step_id="storage_box",
                 data_schema=vol.Schema({}),
@@ -308,7 +272,7 @@ class HetznerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input:
             # The dropdown submits the box ID, which stays stable while the
             # box's status or name may change between showing and submitting
-            selected_box_id = user_input.get(STORAGE_BOX_SELECT_FIELD)
+            selected_box_id = user_input.get(STORAGE_BOX_SELECT_FIELD, "")
             selected_box = storage_boxes.get(selected_box_id)
 
             if selected_box:
@@ -323,8 +287,6 @@ class HetznerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_HOST: self.data[CONF_HOST],
                         CONF_STORAGE_BOX_ID: selected_box_id,
                     },
-                    # Display setting only, changed later in the options flow
-                    options={CONF_UNIT: self.data[CONF_UNIT]},
                 )
             else:
                 errors["base"] = "invalid_selection"

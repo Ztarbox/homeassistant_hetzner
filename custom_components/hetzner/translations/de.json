@@ -9,12 +9,10 @@
         "title": "Hetzner Storage Box",
         "description": "Richte die Hetzner Storage Box Integration ein, um deine Storage Box zu überwachen.",
         "data": {
-          "api_key": "API-Schlüssel",
-          "unit": "Anzeigeeinheit"
+          "api_key": "API-Schlüssel"
         },
         "data_description": {
-          "api_key": "API-Token aus der Hetzner Console (dein Projekt → Sicherheit → API-Tokens). Lesezugriff genügt.",
-          "unit": "Einheit der Größen-Sensoren. Sie lässt sich später in den Optionen der Integration ändern."
+          "api_key": "API-Token aus der Hetzner Console (dein Projekt → Sicherheit → API-Tokens). Lesezugriff genügt."
         }
       },
       "storage_box": {
@@ -50,28 +48,73 @@
       "storage_box_not_found": "Dieser API-Token hat keinen Zugriff auf die konfigurierte Storage Box"
     }
   },
-  "options": {
-    "step": {
-      "init": {
-        "title": "Hetzner Storage Box",
-        "description": "Anzeigeeinstellungen für die Hetzner Integration ändern.",
-        "data": {
-          "unit": "Anzeigeeinheit"
-        },
-        "data_description": {
-          "unit": "Einheit der Größen-Sensoren."
+  "entity": {
+    "binary_sensor": {
+      "reachable_externally": {
+        "name": "Extern erreichbar"
+      },
+      "samba": {
+        "name": "Samba"
+      },
+      "ssh": {
+        "name": "SSH"
+      },
+      "webdav": {
+        "name": "WebDAV"
+      },
+      "zfs_snapshot_folder": {
+        "name": "ZFS-Snapshot-Ordner"
+      }
+    },
+    "sensor": {
+      "status": {
+        "state": {
+          "active": "Aktiv",
+          "initializing": "Wird eingerichtet",
+          "locked": "Gesperrt"
         }
+      },
+      "location": {
+        "name": "Standort"
+      },
+      "total_size": {
+        "name": "Gesamtgröße"
+      },
+      "total_used": {
+        "name": "Insgesamt belegt"
+      },
+      "data_size": {
+        "name": "Datengröße"
+      },
+      "snapshot_size": {
+        "name": "Snapshot-Größe"
+      },
+      "free_space": {
+        "name": "Freier Speicher"
       }
     }
   },
-  "selector": {
-    "unit": {
-      "options": {
-        "b": "Bytes",
-        "mb": "Megabytes",
-        "gb": "Gigabytes",
-        "tb": "Terabytes"
-      }
+  "exceptions": {
+    "missing_storage_box_id": {
+      "message": "Der Konfigurationseintrag enthält keine Storage-Box-ID. Lösche ihn und füge die Integration erneut hinzu."
+    },
+    "invalid_api_key": {
+      "message": "Die Hetzner API hat den API-Token abgelehnt: {error}"
+    },
+    "storage_box_not_found": {
+      "message": "Storage Box {storage_box_id} nicht gefunden – gelöscht oder mit diesem API-Token nicht erreichbar"
+    },
+    "api_error": {
+      "message": "Die Hetzner API hat einen Fehler gemeldet: {error}"
+    },
+    "cannot_connect": {
+      "message": "Keine Verbindung zur Hetzner API möglich: {error}"
+    }
+  },
+  "issues": {
+    "storage_box_not_found": {
+      "title": "Storage Box {storage_box_id} nicht gefunden",
+      "description": "Laut Hetzner API wurde die Storage Box {storage_box_id} nicht gefunden – sie wurde gelöscht oder ist mit diesem API-Token nicht erreichbar. Home Assistant versucht es weiter und entfernt diese Meldung, sobald die Box wieder abgerufen werden kann.\n\nWurde die Storage Box gelöscht, lösche diesen Integrationseintrag. Gehört sie zu einem anderen Projekt als der API-Token, lösche den Eintrag und füge die Integration mit einem API-Token dieses Projekts erneut hinzu."
     }
   }
 }

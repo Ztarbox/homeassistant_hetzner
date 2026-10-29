@@ -6,22 +6,20 @@
     },
     "step": {
       "user": {
-        "title": "Hetzner Storage Box Configuration",
-        "description": "Set up Hetzner Storage Box integration to monitor your storage box.",
+        "title": "Hetzner Storage Box",
+        "description": "Set up the Hetzner Storage Box integration to monitor your storage box.",
         "data": {
-          "api_key": "API Key",
-          "unit": "Display unit"
+          "api_key": "API Key"
         },
         "data_description": {
-          "api_key": "API token from the Hetzner Console (your project → Security → API tokens). Read access is enough.",
-          "unit": "Unit for the size sensors. You can change it later in the integration options."
+          "api_key": "API token from the Hetzner Console (your project → Security → API tokens). Read access is enough."
         }
       },
       "storage_box": {
-        "title": "Select Storage Box",
-        "description": "Choose a storage box from your available storage boxes:",
+        "title": "Hetzner Storage Box",
+        "description": "Select a storage box to monitor.",
         "data": {
-          "storage_box_id": "Select a Storage Box"
+          "storage_box_id": "Please select a storage box"
         },
         "data_description": {
           "storage_box_id": "The storage box to monitor. Add the integration again to monitor another box."
@@ -50,28 +48,73 @@
       "storage_box_not_found": "This API token has no access to the configured storage box"
     }
   },
-  "options": {
-    "step": {
-      "init": {
-        "title": "Hetzner Storage Box",
-        "description": "Change display settings for the Hetzner integration.",
-        "data": {
-          "unit": "Display unit"
-        },
-        "data_description": {
-          "unit": "Unit for the size sensors."
+  "entity": {
+    "binary_sensor": {
+      "reachable_externally": {
+        "name": "Reachable externally"
+      },
+      "samba": {
+        "name": "Samba"
+      },
+      "ssh": {
+        "name": "SSH"
+      },
+      "webdav": {
+        "name": "WebDAV"
+      },
+      "zfs_snapshot_folder": {
+        "name": "ZFS snapshot folder"
+      }
+    },
+    "sensor": {
+      "status": {
+        "state": {
+          "active": "Active",
+          "initializing": "Initializing",
+          "locked": "Locked"
         }
+      },
+      "location": {
+        "name": "Location"
+      },
+      "total_size": {
+        "name": "Total size"
+      },
+      "total_used": {
+        "name": "Total used"
+      },
+      "data_size": {
+        "name": "Data size"
+      },
+      "snapshot_size": {
+        "name": "Snapshot size"
+      },
+      "free_space": {
+        "name": "Free space"
       }
     }
   },
-  "selector": {
-    "unit": {
-      "options": {
-        "b": "Bytes",
-        "mb": "Megabytes",
-        "gb": "Gigabytes",
-        "tb": "Terabytes"
-      }
+  "exceptions": {
+    "missing_storage_box_id": {
+      "message": "The config entry has no storage box ID. Delete it and add the integration again."
+    },
+    "invalid_api_key": {
+      "message": "The Hetzner API rejected the API token: {error}"
+    },
+    "storage_box_not_found": {
+      "message": "Storage box {storage_box_id} not found — deleted, or not accessible with this API token"
+    },
+    "api_error": {
+      "message": "The Hetzner API returned an error: {error}"
+    },
+    "cannot_connect": {
+      "message": "Could not connect to the Hetzner API: {error}"
+    }
+  },
+  "issues": {
+    "storage_box_not_found": {
+      "title": "Storage box {storage_box_id} not found",
+      "description": "The Hetzner API reports storage box {storage_box_id} as not found — deleted, or not accessible with this API token. Home Assistant keeps retrying and removes this message once the box can be read again.\n\nIf the storage box was deleted, delete this integration entry. If it belongs to another project than the API token, delete the entry and add the integration again with an API token of that project."
     }
   }
 }

@@ -9,12 +9,10 @@
         "title": "Hetzner Storage Box",
         "description": "Stel de Hetzner Storage Box-integratie in om uw opslagbox te monitoren.",
         "data": {
-          "api_key": "API-sleutel",
-          "unit": "Weergave-eenheid"
+          "api_key": "API-sleutel"
         },
         "data_description": {
-          "api_key": "API-token uit de Hetzner Console (uw project → Security → API tokens). Leestoegang is voldoende.",
-          "unit": "Eenheid van de groottesensoren. U kunt deze later wijzigen in de opties van de integratie."
+          "api_key": "API-token uit de Hetzner Console (uw project → Security → API tokens). Leestoegang is voldoende."
         }
       },
       "storage_box": {
@@ -50,28 +48,73 @@
       "storage_box_not_found": "Deze API-token heeft geen toegang tot de geconfigureerde opslagbox"
     }
   },
-  "options": {
-    "step": {
-      "init": {
-        "title": "Hetzner Storage Box",
-        "description": "Wijzig de weergave-instellingen voor de Hetzner integratie.",
-        "data": {
-          "unit": "Weergave-eenheid"
-        },
-        "data_description": {
-          "unit": "Eenheid van de groottesensoren."
+  "entity": {
+    "binary_sensor": {
+      "reachable_externally": {
+        "name": "Extern bereikbaar"
+      },
+      "samba": {
+        "name": "Samba"
+      },
+      "ssh": {
+        "name": "SSH"
+      },
+      "webdav": {
+        "name": "WebDAV"
+      },
+      "zfs_snapshot_folder": {
+        "name": "ZFS-snapshotmap"
+      }
+    },
+    "sensor": {
+      "status": {
+        "state": {
+          "active": "Actief",
+          "initializing": "Wordt ingericht",
+          "locked": "Vergrendeld"
         }
+      },
+      "location": {
+        "name": "Locatie"
+      },
+      "total_size": {
+        "name": "Totale grootte"
+      },
+      "total_used": {
+        "name": "Totaal gebruikt"
+      },
+      "data_size": {
+        "name": "Datagrootte"
+      },
+      "snapshot_size": {
+        "name": "Snapshotgrootte"
+      },
+      "free_space": {
+        "name": "Vrije ruimte"
       }
     }
   },
-  "selector": {
-    "unit": {
-      "options": {
-        "b": "Bytes",
-        "mb": "Megabytes",
-        "gb": "Gigabytes",
-        "tb": "Terabytes"
-      }
+  "exceptions": {
+    "missing_storage_box_id": {
+      "message": "De configuratie bevat geen opslagbox-ID. Verwijder deze en voeg de integratie opnieuw toe."
+    },
+    "invalid_api_key": {
+      "message": "De Hetzner API heeft de API-token geweigerd: {error}"
+    },
+    "storage_box_not_found": {
+      "message": "Opslagbox {storage_box_id} niet gevonden — verwijderd, of niet toegankelijk met deze API-token"
+    },
+    "api_error": {
+      "message": "De Hetzner API gaf een fout: {error}"
+    },
+    "cannot_connect": {
+      "message": "Kan geen verbinding maken met de Hetzner API: {error}"
+    }
+  },
+  "issues": {
+    "storage_box_not_found": {
+      "title": "Opslagbox {storage_box_id} niet gevonden",
+      "description": "Volgens de Hetzner API is opslagbox {storage_box_id} niet gevonden — verwijderd, of niet toegankelijk met deze API-token. Home Assistant blijft het opnieuw proberen en verwijdert deze melding zodra de box weer kan worden opgehaald.\n\nAls de opslagbox is verwijderd, verwijder dan deze integratie-invoer. Hoort de box bij een ander project dan de API-token, verwijder dan de invoer en voeg de integratie opnieuw toe met een API-token van dat project."
     }
   }
 }

@@ -6,8 +6,9 @@ from typing import Any
 from unittest.mock import patch
 
 from homeassistant.config_entries import ConfigEntryState
+from homeassistant.const import CONF_API_KEY, CONF_HOST, UnitOfInformation
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import entity_registry as er, issue_registry as ir
 import pytest
 from pytest_homeassistant_custom_component.common import (  # type: ignore[import-untyped]
     MockConfigEntry,
@@ -19,23 +20,40 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import (  # type: i
 from custom_components.hetzner import (
     _safe_update_unique_id,
     async_migrate_entry,
+    async_remove_entry,
     async_unload_entry,
 )
 from custom_components.hetzner.const import (
-    CONF_API_KEY,
-    CONF_HOST,
     CONF_STORAGE_BOX_ID,
-    CONF_UNIT,
     DEFAULT_HOST,
     DOMAIN,
+    LEGACY_CONF_UNIT,
+    SIZE_METRICS,
 )
 from custom_components.hetzner.coordinator import HetznerDataUpdateCoordinator
 
-from tests.conftest import API_KEY, BOX_URL, STORAGE_BOX_ID
+from tests.conftest import API_KEY, BOX_URL, STORAGE_BOX, STORAGE_BOX_ID
 
 PREFIX = f"{DOMAIN}_storage_box_{STORAGE_BOX_ID}"
-METRICS = ["total", "used", "data", "snapshots", "free"]
-NON_SIZE_IDS = [PREFIX, f"{PREFIX}_location", f"{PREFIX}_access_options"]
+METRICS = list(SIZE_METRICS)
+ACCESS_OPTIONS_ID = f"{PREFIX}_access_options"
+ENTRY_DATA = {
+    CONF_API_KEY: API_KEY,
+    CONF_HOST: DEFAULT_HOST,
+    CONF_STORAGE_BOX_ID: STORAGE_BOX_ID,
+}
+# Byte values of the fixture by metric
+BYTES = {
+    "total": 2**40,
+    "used": 300_000_000_000,
+    "data": 250_000_000_000,
+    "snapshots": 50_000_000_000,
+    "free": 2**40 - 300_000_000_000,
+}
+assert BYTES["total"] == STORAGE_BOX["storage_box_type"]["size"]
+# Bytes per unit of the removed unit setting, which converted with these
+UNIT_FACTORS = {"B": 1, "MB": 1000**2, "GB": 1000**3, "TB": 1000**4}
+GIB_PRIVATE = {"suggested_unit_of_measurement": "GiB"}
 
 
 def _mock_box(aioclient_mock: AiohttpClientMocker, box: dict[str, Any]) -> None:
@@ -46,54 +64,55 @@ def _mock_box(aioclient_mock: AiohttpClientMocker, box: dict[str, Any]) -> None:
 def _make_entry(
     hass: HomeAssistant,
     version: int,
-    unit: str = "GB",
+    unit: str | None = "GB",
     options: dict[str, Any] | None = None,
 ) -> MockConfigEntry:
     """Create and add a config entry with the given version.
 
-    Up to version 3 the unit chosen during setup is stored in data, from
-    version 4 on in options.
+    Before version 4 the unit chosen during setup is stored in data, in
+    version 4 in options; version 5 has no unit.
     """
-    data = {
-        CONF_API_KEY: API_KEY,
-        CONF_HOST: DEFAULT_HOST,
-        CONF_STORAGE_BOX_ID: STORAGE_BOX_ID,
-    }
-    if version < 4:
-        data[CONF_UNIT] = unit
-    else:
-        options = {CONF_UNIT: unit, **(options or {})}
+    data: dict[str, Any] = dict(ENTRY_DATA)
+    options = dict(options or {})
+    if unit is not None and version < 4:
+        data[LEGACY_CONF_UNIT] = unit
+    elif unit is not None and version == 4:
+        options = {LEGACY_CONF_UNIT: unit, **options}
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Hetzner backup",
         version=version,
         unique_id=STORAGE_BOX_ID,
         data=data,
-        options=options or {},
+        options=options,
     )
     entry.add_to_hass(hass)
     return entry
 
 
 def _register(
-    hass: HomeAssistant, unique_id: str, entry: MockConfigEntry | None
+    hass: HomeAssistant,
+    unique_id: str,
+    entry: MockConfigEntry | None,
+    unit: str | None = None,
+    domain: str = "sensor",
 ) -> er.RegistryEntry:
-    """Pre-populate the entity registry with a hetzner sensor."""
+    """Pre-populate the entity registry with a hetzner entity."""
     return er.async_get(hass).async_get_or_create(
-        "sensor", DOMAIN, unique_id, config_entry=entry
+        domain, DOMAIN, unique_id, config_entry=entry, unit_of_measurement=unit
     )
 
 
-def _size_entities(
-    hass: HomeAssistant, entry: MockConfigEntry
-) -> dict[str, er.RegistryEntry]:
-    """Return size sensor registry entries of an entry keyed by metric."""
-    result = {}
-    for reg in er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id):
-        for metric in METRICS:
-            if str(reg.unique_id).startswith(f"{PREFIX}_{metric}_"):
-                result[metric] = reg
-    return result
+def _old_size_ids(version: int, unit: str) -> dict[str, str]:
+    """Return the size sensor unique_ids an entry of version 2 to 4 used."""
+    return {metric: f"{PREFIX}_{metric}_{unit.lower()}" for metric in METRICS}
+
+
+def _reg(hass: HomeAssistant, entity_id: str) -> er.RegistryEntry:
+    """Return the registry entry of an entity that must exist."""
+    reg = er.async_get(hass).async_get(entity_id)
+    assert reg is not None
+    return reg
 
 
 async def _setup(hass: HomeAssistant, entry: MockConfigEntry) -> None:
@@ -108,14 +127,12 @@ async def test_setup_and_unload(
     config_entry: MockConfigEntry,
     storage_box: dict[str, Any],
 ) -> None:
-    """Setup stores the runtime data on the entry, unload removes it."""
+    """Setup stores the coordinator on the entry, unload removes it."""
     _mock_box(aioclient_mock, storage_box)
     await _setup(hass, config_entry)
 
     assert config_entry.state is ConfigEntryState.LOADED
-    runtime_data = config_entry.runtime_data
-    assert runtime_data.unit == "GB"
-    coordinator = runtime_data.coordinator
+    coordinator = config_entry.runtime_data
     assert isinstance(coordinator, HetznerDataUpdateCoordinator)
     assert coordinator.config_entry is not None
     assert coordinator.config_entry.entry_id == config_entry.entry_id
@@ -123,28 +140,14 @@ async def test_setup_and_unload(
     _, url, _, headers = aioclient_mock.mock_calls[0]
     assert str(url).startswith(f"https://{DEFAULT_HOST}/")
     assert headers["Authorization"] == f"Bearer {API_KEY}"
+    # Nothing to reload on entry changes: reauth reloads by itself
+    assert config_entry.update_listeners == []
 
     assert await hass.config_entries.async_unload(config_entry.entry_id)
     await hass.async_block_till_done()
 
     assert config_entry.state is ConfigEntryState.NOT_LOADED
     assert not hasattr(config_entry, "runtime_data")
-
-
-async def test_setup_options_unit_overrides_data(
-    hass: HomeAssistant,
-    aioclient_mock: AiohttpClientMocker,
-    storage_box: dict[str, Any],
-) -> None:
-    """Unit from options wins over unit from data of a v3 entry."""
-    _mock_box(aioclient_mock, storage_box)
-    entry = _make_entry(hass, 3, unit="GB", options={CONF_UNIT: "TB"})
-    await _setup(hass, entry)
-
-    assert entry.runtime_data.unit == "TB"
-    assert set(_size_entities(hass, entry)) == set(METRICS)
-    for reg in _size_entities(hass, entry).values():
-        assert str(reg.unique_id).endswith("_tb")
 
 
 async def test_unload_failure_keeps_data(
@@ -168,95 +171,30 @@ async def test_unload_failure_keeps_data(
     await hass.async_block_till_done()
 
 
-async def test_migrate_v1_legacy_unique_ids(
+@pytest.mark.parametrize("unit", ["B", "MB", "GB", "TB"])
+@pytest.mark.parametrize("version", [2, 3, 4])
+async def test_migrate_to_v5(
     hass: HomeAssistant,
     aioclient_mock: AiohttpClientMocker,
     storage_box: dict[str, Any],
+    version: int,
+    unit: str,
 ) -> None:
-    """Legacy size unique_ids get the unit appended and the entry is bumped to v3."""
+    """Size unique_ids lose the unit, which stays the displayed unit.
+
+    The registry looks like the old platform left it: the size sensors were
+    registered with the configured unit as their unit.
+    """
     _mock_box(aioclient_mock, storage_box)
-    entry = _make_entry(hass, 1, unit="GB")
-    legacy = {m: _register(hass, f"{PREFIX}_{m}", entry) for m in METRICS}
-    others = {uid: _register(hass, uid, entry) for uid in NON_SIZE_IDS}
-    foreign = _register(hass, "some_other_unique_id", entry)
-
-    await _setup(hass, entry)
-
-    registry = er.async_get(hass)
-    assert entry.version == 4
-    assert CONF_UNIT not in entry.data
-    assert entry.options == {CONF_UNIT: "GB"}
-    for metric, reg in legacy.items():
-        updated = registry.async_get(reg.entity_id)
-        assert updated is not None
-        assert updated.unique_id == f"{PREFIX}_{metric}_gb"
-    for uid, reg in others.items():
-        updated = registry.async_get(reg.entity_id)
-        assert updated is not None
-        assert updated.unique_id == uid
-    updated = registry.async_get(foreign.entity_id)
-    assert updated is not None
-    assert updated.unique_id == "some_other_unique_id"
-
-    # Migrated entities are reused by the platform: no duplicates created
-    assert {r.entity_id for r in _size_entities(hass, entry).values()} == {
-        r.entity_id for r in legacy.values()
+    entry = _make_entry(hass, version, unit=unit)
+    old = {
+        metric: _register(hass, unique_id, entry, unit)
+        for metric, unique_id in _old_size_ids(version, unit).items()
     }
-    for reg in legacy.values():
-        state = hass.states.get(reg.entity_id)
-        assert state is not None
-        assert state.attributes["unit_of_measurement"] == "GB"
-
-
-async def test_migrate_v1_uses_options_unit(
-    hass: HomeAssistant,
-    aioclient_mock: AiohttpClientMocker,
-    storage_box: dict[str, Any],
-) -> None:
-    """Migration appends the unit from options when present."""
-    _mock_box(aioclient_mock, storage_box)
-    entry = _make_entry(hass, 1, unit="GB", options={CONF_UNIT: "TB"})
-    reg = _register(hass, f"{PREFIX}_total", entry)
-
-    await _setup(hass, entry)
-
-    updated = er.async_get(hass).async_get(reg.entity_id)
-    assert updated is not None
-    assert updated.unique_id == f"{PREFIX}_total_tb"
-
-
-async def test_migrate_v1_removes_conflicting_stale_entity(
-    hass: HomeAssistant,
-    aioclient_mock: AiohttpClientMocker,
-    storage_box: dict[str, Any],
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """A stale entity holding the target unique_id is removed before renaming."""
-    _mock_box(aioclient_mock, storage_box)
-    entry = _make_entry(hass, 1, unit="GB")
-    stale = _register(hass, f"{PREFIX}_total_gb", None)
-    legacy = _register(hass, f"{PREFIX}_total", entry)
-
-    await _setup(hass, entry)
-
-    registry = er.async_get(hass)
-    assert registry.async_get(stale.entity_id) is None
-    updated = registry.async_get(legacy.entity_id)
-    assert updated is not None
-    assert updated.unique_id == f"{PREFIX}_total_gb"
-    assert "Removing conflicting stale entity" in caplog.text
-    assert entry.version == 4
-
-
-async def test_migrate_v2_entry_bumped_without_renaming(
-    hass: HomeAssistant,
-    aioclient_mock: AiohttpClientMocker,
-    storage_box: dict[str, Any],
-) -> None:
-    """A v2 entry is bumped to v3 once and its unique_ids are left alone."""
-    _mock_box(aioclient_mock, storage_box)
-    entry = _make_entry(hass, 2, unit="GB")
-    reg = _register(hass, f"{PREFIX}_total_gb", entry)
+    status = _register(hass, PREFIX, entry)
+    location = _register(hass, f"{PREFIX}_location", entry)
+    access_options = _register(hass, ACCESS_OPTIONS_ID, entry)
+    foreign = _register(hass, "some_other_unique_id", entry)
 
     with patch(
         "custom_components.hetzner.async_migrate_entry",
@@ -266,305 +204,279 @@ async def test_migrate_v2_entry_bumped_without_renaming(
         assert await hass.config_entries.async_reload(entry.entry_id)
         await hass.async_block_till_done()
 
-    assert entry.state is ConfigEntryState.LOADED
-    assert entry.version == 4
     assert migrate.call_count == 1
-    updated = er.async_get(hass).async_get(reg.entity_id)
-    assert updated is not None
-    assert updated.unique_id == f"{PREFIX}_total_gb"
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.version == 5
+    assert entry.data == ENTRY_DATA
+    assert entry.options == {}
+
+    registry = er.async_get(hass)
+    for metric, reg in old.items():
+        updated = _reg(hass, reg.entity_id)
+        assert updated.unique_id == f"{PREFIX}_{metric}"
+        assert updated.options["sensor"]["unit_of_measurement"] == unit
+        assert updated.options["sensor.private"] == GIB_PRIVATE
+
+        state = hass.states.get(reg.entity_id)
+        assert state is not None
+        assert state.attributes["unit_of_measurement"] == unit
+        assert float(state.state) == pytest.approx(BYTES[metric] / UNIT_FACTORS[unit])
+    if unit == "GB":
+        # The BX11 total the old code showed as 1,099.51 GB
+        assert float(hass.states.get(old["total"].entity_id).state) == (  # type: ignore[union-attr]
+            pytest.approx(1099.511627776)
+        )
+
+    assert registry.async_get(access_options.entity_id) is None
+    for reg in (status, location, foreign):
+        assert _reg(hass, reg.entity_id).unique_id == reg.unique_id
+    # Reused by the platform: no duplicates, plus the five binary sensors
+    entries = er.async_entries_for_config_entry(registry, entry.entry_id)
+    assert len([e for e in entries if e.domain == "sensor"]) == 8
+    assert len([e for e in entries if e.domain == "binary_sensor"]) == 5
+
+
+async def test_migrate_v1_bytes(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    storage_box: dict[str, Any],
+) -> None:
+    """Version 1 had no unit setting and registered the size sensors in "bytes".
+
+    HA has no converter for "bytes", so they report the equivalent B; the
+    statistics unit has to be fixed once by the user (see README).
+    """
+    _mock_box(aioclient_mock, storage_box)
+    entry = _make_entry(hass, 1, unit=None)
+    old = {
+        metric: _register(hass, f"{PREFIX}_{metric}", entry, "bytes")
+        for metric in METRICS
+    }
+    access_options = _register(hass, ACCESS_OPTIONS_ID, entry)
+
+    await _setup(hass, entry)
+
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.version == 5
+    assert entry.data == ENTRY_DATA
+    assert entry.options == {}
+    assert er.async_get(hass).async_get(access_options.entity_id) is None
+    for metric, reg in old.items():
+        updated = _reg(hass, reg.entity_id)
+        assert updated.unique_id == f"{PREFIX}_{metric}"
+        assert updated.options["sensor"]["unit_of_measurement"] == "B"
+        assert updated.options["sensor.private"] == GIB_PRIVATE
+
+        state = hass.states.get(reg.entity_id)
+        assert state is not None
+        assert state.attributes["unit_of_measurement"] == UnitOfInformation.BYTES
+        assert int(state.state) == BYTES[metric]
 
 
 @pytest.mark.parametrize(
-    ("data_unit", "options", "expected_options"),
+    ("data_unit", "options_unit", "expected"),
     [
-        ("GB", {}, {CONF_UNIT: "GB"}),
-        ("GB", {CONF_UNIT: "TB"}, {CONF_UNIT: "TB"}),
-        (None, {}, {}),
+        ("GB", "TB", "TB"),
+        ("GB", None, "GB"),
+        (None, None, "B"),
+        # Not offered by the setting; the old code showed raw bytes for it
+        ("PB", None, "B"),
     ],
 )
-async def test_migrate_v3_moves_unit_to_options(
+async def test_migrate_unit_source(
     hass: HomeAssistant,
     aioclient_mock: AiohttpClientMocker,
     storage_box: dict[str, Any],
     data_unit: str | None,
-    options: dict[str, Any],
-    expected_options: dict[str, Any],
+    options_unit: str | None,
+    expected: str,
 ) -> None:
-    """The unit moves from data to options; a unit already in options wins."""
+    """A unit in options wins over data; without any the old default bytes."""
     _mock_box(aioclient_mock, storage_box)
-    entry = _make_entry(hass, 3, options=options)
-    if data_unit is None:
-        data = dict(entry.data)
-        data.pop(CONF_UNIT)
-        hass.config_entries.async_update_entry(entry, data=data)
-    else:
-        assert entry.data[CONF_UNIT] == data_unit
+    options = {} if options_unit is None else {LEGACY_CONF_UNIT: options_unit}
+    entry = _make_entry(hass, 3, unit=data_unit, options=options)
+    reg = _register(hass, f"{PREFIX}_total", entry)
 
     await _setup(hass, entry)
 
-    assert entry.version == 4
-    assert entry.data == {
-        CONF_API_KEY: API_KEY,
-        CONF_HOST: DEFAULT_HOST,
-        CONF_STORAGE_BOX_ID: STORAGE_BOX_ID,
-    }
-    assert entry.options == expected_options
-    expected_unit = expected_options.get(CONF_UNIT, "B")
-    assert entry.runtime_data.unit == expected_unit
-    for metric, reg in _size_entities(hass, entry).items():
-        assert reg.unique_id == f"{PREFIX}_{metric}_{expected_unit.lower()}"
+    assert entry.data == ENTRY_DATA
+    assert entry.options == {}
+    updated = _reg(hass, reg.entity_id)
+    assert updated.unique_id == f"{PREFIX}_total"
+    assert updated.options["sensor"]["unit_of_measurement"] == expected
+    state = hass.states.get(reg.entity_id)
+    assert state is not None
+    assert state.attributes["unit_of_measurement"] == expected
+
+
+async def test_migrate_keeps_user_unit_override(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    storage_box: dict[str, Any],
+) -> None:
+    """A unit set in the entity settings stays, and so do other sensor options."""
+    _mock_box(aioclient_mock, storage_box)
+    entry = _make_entry(hass, 4, unit="GB")
+    registry = er.async_get(hass)
+    total = _register(hass, f"{PREFIX}_total_gb", entry, "GB")
+    registry.async_update_entity_options(
+        total.entity_id,
+        "sensor",
+        {"unit_of_measurement": "MiB", "display_precision": 1},
+    )
+    used = _register(hass, f"{PREFIX}_used_gb", entry, "GB")
+    registry.async_update_entity_options(
+        used.entity_id, "sensor", {"display_precision": 0}
+    )
+
+    await _setup(hass, entry)
+
+    sensor_options = _reg(hass, total.entity_id).options["sensor"]
+    assert sensor_options["unit_of_measurement"] == "MiB"
+    assert sensor_options["display_precision"] == 1
+    state = hass.states.get(total.entity_id)
+    assert state is not None
+    assert state.attributes["unit_of_measurement"] == "MiB"
+    assert float(state.state) == pytest.approx(2**20)
+
+    sensor_options = _reg(hass, used.entity_id).options["sensor"]
+    assert sensor_options["unit_of_measurement"] == "GB"
+    assert sensor_options["display_precision"] == 0
+
+
+async def test_migrate_replaces_old_private_unit(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    storage_box: dict[str, Any],
+) -> None:
+    """The suggested unit the old code stored in sensor.private is replaced.
+
+    Also drops a pending refresh from a unit system change, which would
+    otherwise recompute the private options while the entity is added.
+    """
+    _mock_box(aioclient_mock, storage_box)
+    entry = _make_entry(hass, 4, unit="TB")
+    reg = _register(hass, f"{PREFIX}_free_tb", entry, "TB")
+    er.async_get(hass).async_update_entity_options(
+        reg.entity_id,
+        "sensor.private",
+        {"suggested_unit_of_measurement": "TB", "refresh_initial_entity_options": True},
+    )
+
+    await _setup(hass, entry)
+
+    updated = _reg(hass, reg.entity_id)
+    assert updated.options["sensor.private"] == GIB_PRIVATE
+    assert updated.options["sensor"]["unit_of_measurement"] == "TB"
+    state = hass.states.get(reg.entity_id)
+    assert state is not None
+    assert state.attributes["unit_of_measurement"] == "TB"
+    assert float(state.state) == pytest.approx(BYTES["free"] / 1000**4)
+
+
+async def test_migrate_removes_conflicting_stale_entities(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    storage_box: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Stale entities holding a target unique_id are removed before renaming.
+
+    Leftovers of the entry itself lose against the size sensor of the
+    configured unit, whatever their order in the registry.
+    """
+    _mock_box(aioclient_mock, storage_box)
+    entry = _make_entry(hass, 4, unit="GB")
+    # Unrelated entity already holding the new unique_id
+    stale = _register(hass, f"{PREFIX}_total", None)
+    total = _register(hass, f"{PREFIX}_total_gb", entry, "GB")
+    # Leftovers of the entry registered before the live entity
+    legacy_used = _register(hass, f"{PREFIX}_used", entry)
+    used = _register(hass, f"{PREFIX}_used_gb", entry, "GB")
+    free = _register(hass, f"{PREFIX}_free_gb", entry, "GB")
+    # ... and after it
+    old_free = _register(hass, f"{PREFIX}_free_tb", entry, "TB")
+    # Two leftovers: the one renamed first removes the other before its turn
+    old_data = _register(hass, f"{PREFIX}_data_tb", entry, "TB")
+    legacy_data = _register(hass, f"{PREFIX}_data", entry)
+    data = _register(hass, f"{PREFIX}_data_gb", entry, "GB")
+
+    await _setup(hass, entry)
+
+    registry = er.async_get(hass)
+    for removed in (stale, legacy_used, old_free, old_data, legacy_data):
+        assert registry.async_get(removed.entity_id) is None
+        assert f"Removing conflicting stale entity {removed.entity_id}" in caplog.text
+    for metric, reg in (
+        ("total", total),
+        ("used", used),
+        ("data", data),
+        ("free", free),
+    ):
+        updated = _reg(hass, reg.entity_id)
+        assert updated.unique_id == f"{PREFIX}_{metric}"
+        state = hass.states.get(reg.entity_id)
+        assert state is not None
+        assert state.attributes["unit_of_measurement"] == "GB"
+    assert entry.version == 5
+
+
+async def test_migrate_removes_only_own_access_options_sensor(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    storage_box: dict[str, Any],
+) -> None:
+    """Only this box's access options sensor goes; ids sharing its prefix stay."""
+    _mock_box(aioclient_mock, storage_box)
+    entry = _make_entry(hass, 4)
+    access_options = _register(hass, ACCESS_OPTIONS_ID, entry)
+    other_box = _register(hass, f"{DOMAIN}_storage_box_999_access_options", None)
+    # A binary sensor with the same unique_id is no access options sensor
+    binary = _register(hass, ACCESS_OPTIONS_ID, entry, domain="binary_sensor")
+    status = _register(hass, PREFIX, entry)
+
+    await _setup(hass, entry)
+
+    registry = er.async_get(hass)
+    assert registry.async_get(access_options.entity_id) is None
+    for reg in (other_box, binary, status):
+        assert _reg(hass, reg.entity_id).unique_id == reg.unique_id
+    assert hass.states.get(access_options.entity_id) is None
+
+
+async def test_migrate_entry_without_storage_box_id(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """An entry without a box id is migrated and then fails setup as before."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=3,
+        data={CONF_API_KEY: API_KEY, LEGACY_CONF_UNIT: "GB"},
+    )
+    entry.add_to_hass(hass)
+
+    assert not await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert entry.version == 5
+    assert entry.data == {CONF_API_KEY: API_KEY}
+    assert entry.state is ConfigEntryState.SETUP_ERROR
+    assert aioclient_mock.call_count == 0
 
 
 async def test_migrate_current_entry_is_noop(
     hass: HomeAssistant, config_entry: MockConfigEntry
 ) -> None:
-    """Migrating an entry that is already v3 changes nothing."""
-    reg = _register(hass, f"{PREFIX}_total", config_entry)
+    """Migrating an entry that is already v5 changes nothing."""
+    reg = _register(hass, f"{PREFIX}_total_gb", config_entry)
+    access_options = _register(hass, ACCESS_OPTIONS_ID, config_entry)
 
     with patch.object(hass.config_entries, "async_update_entry") as update:
         assert await async_migrate_entry(hass, config_entry)
 
     update.assert_not_called()
-    updated = er.async_get(hass).async_get(reg.entity_id)
-    assert updated is not None
-    assert updated.unique_id == f"{PREFIX}_total"
-
-
-async def test_options_change_renames_and_reloads(
-    hass: HomeAssistant,
-    aioclient_mock: AiohttpClientMocker,
-    config_entry: MockConfigEntry,
-    storage_box: dict[str, Any],
-) -> None:
-    """Changing the unit renames size unique_ids, keeps entity_ids and reloads."""
-    _mock_box(aioclient_mock, storage_box)
-    await _setup(hass, config_entry)
-    registry = er.async_get(hass)
-
-    before = _size_entities(hass, config_entry)
-    assert set(before) == set(METRICS)
-    for metric, reg in before.items():
-        assert reg.unique_id == f"{PREFIX}_{metric}_gb"
-    status_id = registry.async_get_entity_id("sensor", DOMAIN, PREFIX)
-    calls_before = aioclient_mock.call_count
-
-    hass.config_entries.async_update_entry(config_entry, options={CONF_UNIT: "TB"})
-    await hass.async_block_till_done()
-
-    assert config_entry.state is ConfigEntryState.LOADED
-    # Reload fetched the API again
-    assert aioclient_mock.call_count > calls_before
-    assert config_entry.runtime_data.unit == "TB"
-    assert registry.async_get_entity_id("sensor", DOMAIN, PREFIX) == status_id
-
-    after = _size_entities(hass, config_entry)
-    for metric, reg in before.items():
-        updated = after[metric]
-        assert updated.entity_id == reg.entity_id
-        assert updated.unique_id == f"{PREFIX}_{metric}_tb"
-        assert (
-            updated.options["sensor.private"]["suggested_unit_of_measurement"] == "TB"
-        )
-
-    state = hass.states.get(before["total"].entity_id)
-    assert state is not None
-    assert state.attributes["unit_of_measurement"] == "TB"
-    assert float(state.state) == 1.0
-    state = hass.states.get(before["used"].entity_id)
-    assert state is not None
-    assert float(state.state) == 0.3
-    # No duplicate entities were created
-    assert len(er.async_entries_for_config_entry(registry, config_entry.entry_id)) == 8
-
-
-async def test_options_change_user_unit_override(
-    hass: HomeAssistant,
-    aioclient_mock: AiohttpClientMocker,
-    config_entry: MockConfigEntry,
-    storage_box: dict[str, Any],
-) -> None:
-    """A unit change clears a user unit override but keeps other sensor options."""
-    _mock_box(aioclient_mock, storage_box)
-    await _setup(hass, config_entry)
-    registry = er.async_get(hass)
-    entity_id = _size_entities(hass, config_entry)["total"].entity_id
-
-    registry.async_update_entity_options(
-        entity_id, "sensor", {"unit_of_measurement": "MB", "display_precision": 1}
-    )
-    await hass.async_block_till_done()
-    state = hass.states.get(entity_id)
-    assert state is not None
-    assert state.attributes["unit_of_measurement"] == "MB"
-
-    hass.config_entries.async_update_entry(config_entry, options={CONF_UNIT: "TB"})
-    await hass.async_block_till_done()
-
-    reg = registry.async_get(entity_id)
-    assert reg is not None
-    assert reg.unique_id == f"{PREFIX}_total_tb"
-    assert "unit_of_measurement" not in reg.options["sensor"]
-    assert reg.options["sensor"]["display_precision"] == 1
-    state = hass.states.get(entity_id)
-    assert state is not None
-    assert state.attributes["unit_of_measurement"] == "TB"
-    assert state.state == "1.0"
-
-
-async def test_options_change_without_user_override(
-    hass: HomeAssistant,
-    aioclient_mock: AiohttpClientMocker,
-    config_entry: MockConfigEntry,
-    storage_box: dict[str, Any],
-) -> None:
-    """Without a user unit override the "sensor" options are left untouched."""
-    _mock_box(aioclient_mock, storage_box)
-    await _setup(hass, config_entry)
-    registry = er.async_get(hass)
-    entity_id = _size_entities(hass, config_entry)["total"].entity_id
-    before = registry.async_get(entity_id)
-    assert before is not None
-    sensor_options = before.options.get("sensor")
-
-    hass.config_entries.async_update_entry(config_entry, options={CONF_UNIT: "TB"})
-    await hass.async_block_till_done()
-
-    reg = registry.async_get(entity_id)
-    assert reg is not None
-    assert reg.options.get("sensor") == sensor_options
-
-
-async def test_entry_update_without_unit_change_keeps_user_unit(
-    hass: HomeAssistant,
-    aioclient_mock: AiohttpClientMocker,
-    config_entry: MockConfigEntry,
-    storage_box: dict[str, Any],
-) -> None:
-    """Renaming the entry or toggling polling neither reloads nor resets units."""
-    _mock_box(aioclient_mock, storage_box)
-    await _setup(hass, config_entry)
-    registry = er.async_get(hass)
-    entity_id = _size_entities(hass, config_entry)["total"].entity_id
-    registry.async_update_entity_options(
-        entity_id, "sensor", {"unit_of_measurement": "MB"}
-    )
-    await hass.async_block_till_done()
-
-    with patch.object(hass.config_entries, "async_reload") as reload:
-        hass.config_entries.async_update_entry(config_entry, title="Renamed")
-        await hass.async_block_till_done()
-        hass.config_entries.async_update_entry(config_entry, pref_disable_polling=True)
-        await hass.async_block_till_done()
-        hass.config_entries.async_update_entry(config_entry, options={CONF_UNIT: "GB"})
-        await hass.async_block_till_done()
-
-    reload.assert_not_called()
-    reg = registry.async_get(entity_id)
-    assert reg is not None
-    assert reg.unique_id == f"{PREFIX}_total_gb"
-    assert reg.options["sensor"]["unit_of_measurement"] == "MB"
-    state = hass.states.get(entity_id)
-    assert state is not None
-    assert state.attributes["unit_of_measurement"] == "MB"
-
-
-async def test_unit_change_during_setup_retry_reuses_entities(
-    hass: HomeAssistant,
-    aioclient_mock: AiohttpClientMocker,
-    config_entry: MockConfigEntry,
-    storage_box: dict[str, Any],
-) -> None:
-    """A unit changed while setup waits for a retry renames the size sensors."""
-    registry = er.async_get(hass)
-    existing = {m: _register(hass, f"{PREFIX}_{m}_gb", config_entry) for m in METRICS}
-    registry.async_update_entity_options(
-        existing["total"].entity_id, "sensor", {"unit_of_measurement": "MB"}
-    )
-
-    aioclient_mock.get(BOX_URL, status=500)
-    assert not await hass.config_entries.async_setup(config_entry.entry_id)
-    await hass.async_block_till_done()
-    assert config_entry.state is ConfigEntryState.SETUP_RETRY
-
-    hass.config_entries.async_update_entry(config_entry, options={CONF_UNIT: "TB"})
-    await hass.async_block_till_done()
-
-    aioclient_mock.clear_requests()
-    _mock_box(aioclient_mock, storage_box)
-    await hass.config_entries.async_reload(config_entry.entry_id)
-    await hass.async_block_till_done()
-
-    assert config_entry.state is ConfigEntryState.LOADED
-    after = _size_entities(hass, config_entry)
-    for metric, reg in existing.items():
-        assert after[metric].entity_id == reg.entity_id
-        assert after[metric].unique_id == f"{PREFIX}_{metric}_tb"
-        assert (
-            after[metric].options["sensor.private"]["suggested_unit_of_measurement"]
-            == "TB"
-        )
-    assert "unit_of_measurement" not in after["total"].options["sensor"]
-    # No duplicate entities were created
-    assert len(er.async_entries_for_config_entry(registry, config_entry.entry_id)) == 8
-    state = hass.states.get(existing["total"].entity_id)
-    assert state is not None
-    assert state.attributes["unit_of_measurement"] == "TB"
-
-
-async def test_options_change_renames_legacy_ids_and_removes_conflicts(
-    hass: HomeAssistant,
-    aioclient_mock: AiohttpClientMocker,
-    config_entry: MockConfigEntry,
-    storage_box: dict[str, Any],
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Legacy ids are renamed; stale entities holding a target id are removed."""
-    _mock_box(aioclient_mock, storage_box)
-    await _setup(hass, config_entry)
-    registry = er.async_get(hass)
-    other = f"{DOMAIN}_storage_box_999"
-
-    # Legacy id that can be renamed
-    legacy_ok = _register(hass, f"{other}_used", config_entry)
-    # Legacy id whose target is taken by a stale entity of the same entry
-    legacy_conflict = _register(hass, f"{other}_total", config_entry)
-    taken_legacy = _register(hass, f"{other}_total_tb", config_entry)
-    # Current-format id whose target is taken by an unrelated entity
-    taken_current = _register(hass, f"{PREFIX}_free_tb", None)
-    free_id = _size_entities(hass, config_entry)["free"].entity_id
-    # Non-size and foreign ids are ignored
-    location = _register(hass, f"{other}_location", config_entry)
-    foreign = _register(hass, "foreign_unique_id", config_entry)
-
-    hass.config_entries.async_update_entry(config_entry, options={CONF_UNIT: "TB"})
-    await hass.async_block_till_done()
-
-    assert config_entry.state is ConfigEntryState.LOADED
-
-    def uid(entity_id: str) -> str | None:
-        reg = registry.async_get(entity_id)
-        return None if reg is None else reg.unique_id
-
-    assert uid(legacy_ok.entity_id) == f"{other}_used_tb"
-    assert uid(legacy_conflict.entity_id) == f"{other}_total_tb"
-    assert uid(taken_legacy.entity_id) is None
-    assert uid(free_id) == f"{PREFIX}_free_tb"
-    assert uid(taken_current.entity_id) is None
-    assert uid(location.entity_id) == f"{other}_location"
-    assert uid(foreign.entity_id) == "foreign_unique_id"
-    assert f"Removing conflicting stale entity {taken_legacy.entity_id}" in caplog.text
-    assert f"Removing conflicting stale entity {taken_current.entity_id}" in caplog.text
-
-    for entity_id in (legacy_ok.entity_id, legacy_conflict.entity_id, free_id):
-        reg = registry.async_get(entity_id)
-        assert reg is not None
-        assert reg.options["sensor.private"]["suggested_unit_of_measurement"] == "TB"
-
-    # The renamed entity keeps its entity_id and receives the platform's state
-    state = hass.states.get(free_id)
-    assert state is not None
-    assert state.state == "0.7"
-    assert state.attributes["unit_of_measurement"] == "TB"
+    assert _reg(hass, reg.entity_id).unique_id == f"{PREFIX}_total_gb"
+    assert _reg(hass, access_options.entity_id).unique_id == ACCESS_OPTIONS_ID
 
 
 async def test_safe_update_unique_id_same_id_noop(
@@ -572,10 +484,10 @@ async def test_safe_update_unique_id_same_id_noop(
 ) -> None:
     """Renaming to the same unique_id does nothing."""
     registry = er.async_get(hass)
-    reg = _register(hass, f"{PREFIX}_total_gb", config_entry)
+    reg = _register(hass, f"{PREFIX}_total", config_entry)
 
     with patch.object(registry, "async_update_entity") as update:
-        await _safe_update_unique_id(hass, registry, reg, f"{PREFIX}_total_gb")
+        await _safe_update_unique_id(hass, registry, reg, f"{PREFIX}_total")
 
     update.assert_not_called()
 
@@ -587,13 +499,87 @@ async def test_safe_update_unique_id_value_error_logged(
 ) -> None:
     """A ValueError while renaming is logged, not raised."""
     registry = er.async_get(hass)
-    reg = _register(hass, f"{PREFIX}_total", config_entry)
+    reg = _register(hass, f"{PREFIX}_total_gb", config_entry)
 
     with patch.object(registry, "async_update_entity", side_effect=ValueError("boom")):
-        await _safe_update_unique_id(hass, registry, reg, f"{PREFIX}_total_gb")
+        await _safe_update_unique_id(hass, registry, reg, f"{PREFIX}_total")
 
     assert "Could not update unique_id" in caplog.text
     assert "boom" in caplog.text
-    updated = registry.async_get(reg.entity_id)
-    assert updated is not None
-    assert updated.unique_id == f"{PREFIX}_total"
+    assert _reg(hass, reg.entity_id).unique_id == f"{PREFIX}_total_gb"
+
+
+async def test_migrate_downgrade_refused(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """An entry written by a newer version is left untouched and not set up."""
+    entry = _make_entry(hass, 6, options={"future": True})
+    reg = _register(hass, f"{PREFIX}_total_gb", entry)
+    data, options = dict(entry.data), dict(entry.options)
+
+    assert not await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.MIGRATION_ERROR
+    assert entry.version == 6
+    assert entry.data == data
+    assert entry.options == options
+    assert _reg(hass, reg.entity_id).unique_id == f"{PREFIX}_total_gb"
+    assert aioclient_mock.call_count == 0
+
+
+async def test_migrate_entry_refuses_newer_version(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """async_migrate_entry itself refuses an entry from a newer version.
+
+    Home Assistant already stops before calling it; the guard keeps a direct
+    call from rewriting data of an unknown layout.
+    """
+    entry = _make_entry(hass, 6)
+    reg = _register(hass, f"{PREFIX}_total_gb", entry)
+    access_options = _register(hass, ACCESS_OPTIONS_ID, entry)
+
+    with patch.object(hass.config_entries, "async_update_entry") as update:
+        assert not await async_migrate_entry(hass, entry)
+
+    update.assert_not_called()
+    assert _reg(hass, reg.entity_id).unique_id == f"{PREFIX}_total_gb"
+    assert _reg(hass, access_options.entity_id).unique_id == ACCESS_OPTIONS_ID
+    assert "Cannot downgrade config entry" in caplog.text
+
+
+def test_legacy_units_are_information_units() -> None:
+    """The stored units are exactly the values of HA's information units."""
+    assert {UnitOfInformation(unit) for unit in UNIT_FACTORS} == {
+        UnitOfInformation.BYTES,
+        UnitOfInformation.MEGABYTES,
+        UnitOfInformation.GIGABYTES,
+        UnitOfInformation.TERABYTES,
+    }
+
+
+async def test_remove_entry_without_issue(
+    hass: HomeAssistant, config_entry: MockConfigEntry
+) -> None:
+    """Removing an entry without a repair issue does nothing else."""
+    other = "storage_box_not_found_other"
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        other,
+        is_fixable=False,
+        severity=ir.IssueSeverity.ERROR,
+        translation_key="storage_box_not_found",
+    )
+
+    await async_remove_entry(hass, config_entry)
+
+    issue_registry = ir.async_get(hass)
+    assert issue_registry.async_get_issue(DOMAIN, other) is not None
+    assert (
+        issue_registry.async_get_issue(
+            DOMAIN, f"storage_box_not_found_{config_entry.entry_id}"
+        )
+        is None
+    )

@@ -1,4 +1,4 @@
-"""Tests for the Hetzner Storage Box config and options flows."""
+"""Tests for the Hetzner Storage Box config flow."""
 
 from __future__ import annotations
 
@@ -9,8 +9,9 @@ from unittest.mock import patch
 import aiohttp
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlowResult
+from homeassistant.const import CONF_API_KEY, CONF_HOST
 from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResultType, InvalidData
+from homeassistant.data_entry_flow import FlowResultType
 import pytest
 from pytest_homeassistant_custom_component.common import (  # type: ignore[import-untyped]
     MockConfigEntry,
@@ -21,15 +22,8 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import (  # type: i
 )
 from yarl import URL
 
-from custom_components.hetzner.const import (
-    CONF_API_KEY,
-    CONF_HOST,
-    CONF_STORAGE_BOX_ID,
-    CONF_UNIT,
-    DEFAULT_HOST,
-    DEFAULT_UNIT,
-    DOMAIN,
-)
+from custom_components.hetzner.config_flow import HetznerConfigFlow
+from custom_components.hetzner.const import CONF_STORAGE_BOX_ID, DEFAULT_HOST, DOMAIN
 
 from tests.conftest import API_KEY, BOX_URL, LIST_URL, STORAGE_BOX_ID
 
@@ -68,11 +62,11 @@ async def _start_flow(hass: HomeAssistant) -> ConfigFlowResult:
 
 
 async def _submit_key(
-    hass: HomeAssistant, flow_id: str, api_key: str = API_KEY, unit: str = "GB"
+    hass: HomeAssistant, flow_id: str, api_key: str = API_KEY
 ) -> ConfigFlowResult:
     """Submit the user step."""
     return await hass.config_entries.flow.async_configure(
-        flow_id, {CONF_API_KEY: api_key, CONF_UNIT: unit}
+        flow_id, {CONF_API_KEY: api_key}
     )
 
 
@@ -115,6 +109,8 @@ async def test_user_step_shows_form(hass: HomeAssistant) -> None:
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "user"
     assert result["errors"] == {}
+    # Only the API key: the size sensors' unit is set per entity
+    assert list(_schema(result)) == [CONF_API_KEY]
 
 
 @pytest.mark.parametrize("api_key", ["", "   "])
@@ -141,7 +137,10 @@ async def test_user_step_api_key_required(
     [
         ({"status": 401}, "invalid_api_key"),
         ({"status": 403}, "invalid_api_key"),
+        ({"status": 403, "json": {"error": {"code": "forbidden"}}}, "invalid_api_key"),
+        ({"status": 403, "json": {"error": {"code": "maintenance"}}}, "api_error"),
         ({"status": 404}, "invalid_host"),
+        ({"status": 429}, "api_error"),
         ({"status": 500}, "api_error"),
         ({"exc": asyncio.TimeoutError()}, "connection_timeout"),
         ({"exc": aiohttp.ClientError("boom")}, "validation_error"),
@@ -201,10 +200,10 @@ async def test_full_flow_creates_entry(
         CONF_HOST: DEFAULT_HOST,
         CONF_STORAGE_BOX_ID: STORAGE_BOX_ID,
     }
-    assert result["options"] == {CONF_UNIT: "GB"}
+    assert result["options"] == {}
     entry = result["result"]
     assert entry.unique_id == STORAGE_BOX_ID
-    assert entry.version == 4
+    assert entry.version == 5
 
 
 async def test_storage_box_step_lists_multiple_boxes(
@@ -277,22 +276,34 @@ async def test_storage_box_without_name_uses_id_in_title(
 
 
 @pytest.mark.parametrize(
-    "list_response",
+    ("list_response", "error"),
     [
-        {"status": 500},
-        {"exc": asyncio.TimeoutError()},
-        {"exc": aiohttp.ClientError("boom")},
-        {"json": {"storage_boxes": []}},
-        {"json": {}},
+        # Only a successful, empty list means there are no boxes
+        ({"json": {"storage_boxes": []}}, "no_storage_boxes"),
+        ({"json": {}}, "no_storage_boxes"),
+        ({"status": 500}, "api_error"),
+        ({"status": 429}, "api_error"),
+        (
+            {"status": 403, "json": {"error": {"code": "maintenance"}}},
+            "api_error",
+        ),
+        ({"status": 401}, "invalid_api_key"),
+        ({"status": 403, "json": {"error": {"code": "forbidden"}}}, "invalid_api_key"),
+        ({"status": 404}, "invalid_host"),
+        ({"text": "not json"}, "api_error"),
+        ({"exc": asyncio.TimeoutError()}, "connection_timeout"),
+        ({"exc": aiohttp.ClientError("boom")}, "validation_error"),
+        ({"exc": ValueError("boom")}, "validation_error"),
     ],
 )
-async def test_storage_box_step_no_storage_boxes(
+async def test_storage_box_step_list_errors(
     hass: HomeAssistant,
     aioclient_mock: AiohttpClientMocker,
     storage_box: dict[str, Any],
     list_response: dict[str, Any],
+    error: str,
 ) -> None:
-    """Test a failed or empty box list shows an error until boxes are found."""
+    """Test a failed or empty box list shows its error until boxes are found."""
     payload = _list_payload(storage_box)
     _queue_list_responses(aioclient_mock, {"json": {}}, list_response, payload, payload)
 
@@ -301,7 +312,7 @@ async def test_storage_box_step_no_storage_boxes(
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "storage_box"
-    assert result["errors"] == {"base": "no_storage_boxes"}
+    assert result["errors"] == {"base": error}
     assert _schema(result) == {}
 
     # Submitting the empty form fetches the boxes again
@@ -379,96 +390,6 @@ async def test_storage_box_step_already_configured(
     assert len(hass.config_entries.async_entries(DOMAIN)) == 1
 
 
-def _options_default(result: ConfigFlowResult) -> Any:
-    """Return the default of the unit field in an options form."""
-    for key in _schema(result):
-        if key == CONF_UNIT:
-            return key.default()
-    raise AssertionError("unit field missing")
-
-
-async def test_options_flow_defaults_to_current_unit(
-    hass: HomeAssistant, config_entry: MockConfigEntry
-) -> None:
-    """Test the options form defaults to the configured unit."""
-    result = await hass.config_entries.options.async_init(config_entry.entry_id)
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "init"
-    assert _options_default(result) == "GB"
-
-
-async def test_options_flow_follows_changed_unit(
-    hass: HomeAssistant, config_entry: MockConfigEntry
-) -> None:
-    """Test the options form defaults to a unit changed earlier."""
-    hass.config_entries.async_update_entry(config_entry, options={CONF_UNIT: "TB"})
-
-    result = await hass.config_entries.options.async_init(config_entry.entry_id)
-
-    assert _options_default(result) == "TB"
-
-
-async def test_options_flow_default_unit_fallback(hass: HomeAssistant) -> None:
-    """Test the options form falls back to the default unit."""
-    entry = MockConfigEntry(domain=DOMAIN, version=4, data={})
-    entry.add_to_hass(hass)
-
-    result = await hass.config_entries.options.async_init(entry.entry_id)
-
-    assert _options_default(result) == DEFAULT_UNIT
-
-
-async def test_options_flow_saves_unit(
-    hass: HomeAssistant, config_entry: MockConfigEntry
-) -> None:
-    """Test submitting the options form stores the new unit."""
-    result = await hass.config_entries.options.async_init(config_entry.entry_id)
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {CONF_UNIT: "TB"}
-    )
-    await hass.async_block_till_done()
-
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["data"] == {CONF_UNIT: "TB"}
-    assert config_entry.options == {CONF_UNIT: "TB"}
-    assert config_entry.state is config_entries.ConfigEntryState.NOT_LOADED
-
-
-async def test_options_flow_rejects_unknown_unit(
-    hass: HomeAssistant, config_entry: MockConfigEntry
-) -> None:
-    """Test the options schema rejects units outside the allowed list."""
-    result = await hass.config_entries.options.async_init(config_entry.entry_id)
-    with pytest.raises(InvalidData):
-        await hass.config_entries.options.async_configure(
-            result["flow_id"], {CONF_UNIT: "PB"}
-        )
-
-
-async def test_user_step_unit_defaults(
-    hass: HomeAssistant,
-    aioclient_mock: AiohttpClientMocker,
-    storage_box: dict[str, Any],
-) -> None:
-    """Test the unit falls back to the default when not submitted."""
-    payload = _list_payload(storage_box)
-    _queue_list_responses(aioclient_mock, payload, payload, payload)
-
-    result = await _start_flow(hass)
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {CONF_API_KEY: API_KEY}
-    )
-    with patch("custom_components.hetzner.async_setup_entry", return_value=True):
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {CONF_STORAGE_BOX_ID: STORAGE_BOX_ID}
-        )
-        await hass.async_block_till_done()
-
-    assert CONF_UNIT not in result["data"]
-    assert result["options"] == {CONF_UNIT: DEFAULT_UNIT}
-
-
 async def test_reauth_flow_updates_api_key(
     hass: HomeAssistant,
     aioclient_mock: AiohttpClientMocker,
@@ -493,7 +414,7 @@ async def test_reauth_flow_updates_api_key(
     assert result["reason"] == "reauth_successful"
     assert config_entry.data[CONF_API_KEY] == "new-key"
     assert config_entry.data[CONF_STORAGE_BOX_ID] == STORAGE_BOX_ID
-    assert config_entry.options == {CONF_UNIT: "GB"}
+    assert config_entry.options == {}
     assert len(setup.mock_calls) == 1
     assert aioclient_mock.call_count == 1
     _, url, _, headers = aioclient_mock.mock_calls[0]
@@ -508,18 +429,19 @@ async def test_reauth_flow_loaded_entry_reloads_with_new_key(
     storage_box: dict[str, Any],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Test reauth of a running entry reloads it through the update listener."""
+    """Test reauth of a running entry reloads it with the new key."""
     aioclient_mock.get(BOX_URL, json={"storage_box": storage_box})
     assert await hass.config_entries.async_setup(config_entry.entry_id)
     await hass.async_block_till_done()
 
     aioclient_mock.clear_requests()
     aioclient_mock.get(BOX_URL, status=401)
-    await config_entry.runtime_data.coordinator.async_refresh()
+    await config_entry.runtime_data.async_refresh()
     await hass.async_block_till_done()
     flows = hass.config_entries.flow.async_progress_by_handler(DOMAIN)
     assert len(flows) == 1
     assert config_entry.state is config_entries.ConfigEntryState.LOADED
+    coordinator = config_entry.runtime_data
 
     aioclient_mock.clear_requests()
     aioclient_mock.get(BOX_URL, json={"storage_box": storage_box})
@@ -531,12 +453,47 @@ async def test_reauth_flow_loaded_entry_reloads_with_new_key(
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reauth_successful"
     assert config_entry.state is config_entries.ConfigEntryState.LOADED
-    assert config_entry.runtime_data.api_key == "new-key"
+    assert config_entry.runtime_data is not coordinator
     # Reauth check plus the first refresh after the reload, both with the new key
     assert aioclient_mock.call_count == 2
     for _, _, _, headers in aioclient_mock.mock_calls:
         assert headers == {"Authorization": "Bearer new-key"}
+    # HA warns when an entry with an update listener is reloaded by the flow
     assert "update listener" not in caplog.text
+
+
+async def test_reauth_flow_failed_entry_set_up_with_new_key(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    storage_box: dict[str, Any],
+) -> None:
+    """Test reauth of an entry whose setup failed with the old key loads it."""
+    aioclient_mock.get(BOX_URL, status=401)
+    assert not await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+    assert config_entry.state is config_entries.ConfigEntryState.SETUP_ERROR
+    flows = hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+    assert len(flows) == 1
+
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(BOX_URL, json={"storage_box": storage_box})
+    result = await hass.config_entries.flow.async_configure(
+        flows[0]["flow_id"], {CONF_API_KEY: "new-key"}
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert config_entry.state is config_entries.ConfigEntryState.LOADED
+    assert config_entry.runtime_data.data == storage_box
+
+
+async def test_no_options_flow(
+    hass: HomeAssistant, config_entry: MockConfigEntry
+) -> None:
+    """Test there are no options: units are set in the entity settings."""
+    assert not HetznerConfigFlow.async_supports_options_flow(config_entry)
 
 
 @pytest.mark.parametrize(
@@ -545,6 +502,11 @@ async def test_reauth_flow_loaded_entry_reloads_with_new_key(
         ("  ", None, "api_key_required"),
         ("new-key", {"status": 401}, "invalid_api_key"),
         ("new-key", {"status": 403}, "invalid_api_key"),
+        (
+            "new-key",
+            {"status": 403, "json": {"error": {"code": "maintenance"}}},
+            "api_error",
+        ),
         ("new-key", {"status": 404}, "storage_box_not_found"),
         ("new-key", {"status": 500}, "api_error"),
         ("new-key", {"exc": asyncio.TimeoutError()}, "connection_timeout"),

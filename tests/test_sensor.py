@@ -10,9 +10,23 @@ from unittest.mock import MagicMock
 
 import aiohttp
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.const import (
+    CONF_API_KEY,
+    CONF_HOST,
+    STATE_OFF,
+    STATE_ON,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
+    EntityCategory,
+    UnitOfInformation,
+)
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.helpers import (
+    device_registry as dr,
+    entity_registry as er,
+    issue_registry as ir,
+)
+from homeassistant.helpers.icon import async_get_icons
 from homeassistant.util import dt as dt_util
 import pytest
 from pytest_homeassistant_custom_component.common import (  # type: ignore[import-untyped]
@@ -23,30 +37,38 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import (  # type: i
     AiohttpClientMocker,
 )
 
-from custom_components.hetzner.const import (
-    CONF_API_KEY,
-    CONF_HOST,
-    CONF_STORAGE_BOX_ID,
-    CONF_UNIT,
-    DEFAULT_HOST,
-    DOMAIN,
+from custom_components.hetzner.binary_sensor import (
+    ACCESS_SETTINGS,
+    HetznerAccessSettingBinarySensor,
 )
-from custom_components.hetzner.sensor import HetznerSizeSensor
+from custom_components.hetzner.const import CONF_STORAGE_BOX_ID, DEFAULT_HOST, DOMAIN
+from custom_components.hetzner.sensor import SIZE_TRANSLATION_KEYS, HetznerSizeSensor
 
 from tests.conftest import API_KEY, BOX_URL, STORAGE_BOX_ID
 
 PREFIX = "sensor.storage_box_backup"
+BINARY_PREFIX = "binary_sensor.storage_box_backup"
+UID = f"hetzner_storage_box_{STORAGE_BOX_ID}"
 
-# entity_id -> unique_id for the GB fixture entry
+# entity_id -> unique_id of the binary sensors, one per access setting
+BINARY_ENTITIES = {
+    f"{BINARY_PREFIX}_reachable_externally": f"{UID}_reachable_externally",
+    f"{BINARY_PREFIX}_samba": f"{UID}_samba_enabled",
+    f"{BINARY_PREFIX}_ssh": f"{UID}_ssh_enabled",
+    f"{BINARY_PREFIX}_webdav": f"{UID}_webdav_enabled",
+    f"{BINARY_PREFIX}_zfs_snapshot_folder": f"{UID}_zfs_enabled",
+}
+
+# entity_id -> unique_id of all entities of the fixture entry
 EXPECTED_ENTITIES = {
-    PREFIX: f"hetzner_storage_box_{STORAGE_BOX_ID}",
-    f"{PREFIX}_location": f"hetzner_storage_box_{STORAGE_BOX_ID}_location",
-    f"{PREFIX}_access_options": f"hetzner_storage_box_{STORAGE_BOX_ID}_access_options",
-    f"{PREFIX}_total_size": f"hetzner_storage_box_{STORAGE_BOX_ID}_total_gb",
-    f"{PREFIX}_total_used": f"hetzner_storage_box_{STORAGE_BOX_ID}_used_gb",
-    f"{PREFIX}_data_size": f"hetzner_storage_box_{STORAGE_BOX_ID}_data_gb",
-    f"{PREFIX}_snapshot_size": f"hetzner_storage_box_{STORAGE_BOX_ID}_snapshots_gb",
-    f"{PREFIX}_free_space": f"hetzner_storage_box_{STORAGE_BOX_ID}_free_gb",
+    PREFIX: UID,
+    f"{PREFIX}_location": f"{UID}_location",
+    f"{PREFIX}_total_size": f"{UID}_total",
+    f"{PREFIX}_total_used": f"{UID}_used",
+    f"{PREFIX}_data_size": f"{UID}_data",
+    f"{PREFIX}_snapshot_size": f"{UID}_snapshots",
+    f"{PREFIX}_free_space": f"{UID}_free",
+    **BINARY_ENTITIES,
 }
 
 SIZE_ENTITIES = {
@@ -66,8 +88,8 @@ def _mock_box(
     aioclient_mock.get(BOX_URL, json={"storage_box": payload}, status=status)
 
 
-def _make_entry(hass: HomeAssistant, unit: str = "GB", **data: Any) -> MockConfigEntry:
-    """Create and add a v4 config entry with the given data overrides."""
+def _make_entry(hass: HomeAssistant, **data: Any) -> MockConfigEntry:
+    """Create and add a current config entry with the given data overrides."""
     entry_data = {
         CONF_API_KEY: API_KEY,
         CONF_HOST: DEFAULT_HOST,
@@ -77,10 +99,9 @@ def _make_entry(hass: HomeAssistant, unit: str = "GB", **data: Any) -> MockConfi
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Hetzner backup",
-        version=4,
+        version=5,
         unique_id=STORAGE_BOX_ID,
         data={k: v for k, v in entry_data.items() if v is not None},
-        options={CONF_UNIT: unit},
     )
     entry.add_to_hass(hass)
     return entry
@@ -130,6 +151,39 @@ async def test_entities_created(
     assert len(dr.async_entries_for_config_entry(dev_reg, config_entry.entry_id)) == 1
 
 
+@pytest.mark.parametrize(
+    ("language", "free_space_name", "reachable_name"),
+    [
+        ("de", "Freier Speicher", "Extern erreichbar"),
+        ("nl", "Vrije ruimte", "Extern bereikbaar"),
+    ],
+)
+async def test_entity_ids_stay_english(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    storage_box: dict[str, Any],
+    language: str,
+    free_space_name: str,
+    reachable_name: str,
+) -> None:
+    """Languages with native entity_ids still get the English entity_ids."""
+    hass.config.language = language
+    _mock_box(aioclient_mock, storage_box)
+    await _setup(hass, config_entry)
+
+    ent_reg = er.async_get(hass)
+    entries = er.async_entries_for_config_entry(ent_reg, config_entry.entry_id)
+    assert {e.entity_id: e.unique_id for e in entries} == EXPECTED_ENTITIES
+    # Only the entity_ids stay English, the names are translated
+    state = hass.states.get(f"{PREFIX}_free_space")
+    assert state is not None
+    assert state.attributes["friendly_name"] == f"Storage Box backup {free_space_name}"
+    state = hass.states.get(f"{BINARY_PREFIX}_reachable_externally")
+    assert state is not None
+    assert state.attributes["friendly_name"] == f"Storage Box backup {reachable_name}"
+
+
 async def test_status_sensor(
     hass: HomeAssistant,
     aioclient_mock: AiohttpClientMocker,
@@ -143,8 +197,9 @@ async def test_status_sensor(
     state = hass.states.get(PREFIX)
     assert state is not None
     assert state.state == "active"
-    assert state.attributes["icon"] == "mdi:database"
     assert state.attributes["friendly_name"] == "Storage Box backup"
+    assert state.attributes["device_class"] == "enum"
+    assert state.attributes["options"] == ["active", "initializing", "locked"]
     for key in ("id", "name", "username", "server", "system", "created"):
         assert state.attributes[key] == storage_box[key]
     assert state.attributes["storage_box_type"] == "bx11"
@@ -163,124 +218,161 @@ async def test_location_sensor(
     state = hass.states.get(f"{PREFIX}_location")
     assert state is not None
     assert state.state == "fsn1"
-    assert state.attributes["icon"] == "mdi:map-marker"
     location = storage_box["location"]
     for key in ("id", "country", "city", "latitude", "longitude", "description"):
         assert state.attributes[key] == location[key]
 
 
-async def test_access_options_sensor(
+async def test_access_setting_binary_sensors(
     hass: HomeAssistant,
     aioclient_mock: AiohttpClientMocker,
     config_entry: MockConfigEntry,
     storage_box: dict[str, Any],
 ) -> None:
-    """Access options counts only True values and mirrors flags as bools."""
-    storage_box["access_settings"]["samba_enabled"] = 1  # truthy, but not True
-    storage_box["access_settings"]["webdav_enabled"] = None
+    """Each access setting is an on/off diagnostic binary sensor."""
     _mock_box(aioclient_mock, storage_box)
     await _setup(hass, config_entry)
 
-    state = hass.states.get(f"{PREFIX}_access_options")
-    assert state is not None
-    assert state.state == "3"
-    assert state.attributes["icon"] == "mdi:network"
-    assert state.attributes["state_class"] == "measurement"
-    assert state.attributes["reachable_externally"] is True
-    assert state.attributes["samba_enabled"] is True
-    assert state.attributes["ssh_enabled"] is True
-    assert state.attributes["webdav_enabled"] is False
-    assert state.attributes["zfs_enabled"] is True
+    expected = {
+        "reachable_externally": STATE_ON,
+        "samba": STATE_OFF,
+        "ssh": STATE_ON,
+        "webdav": STATE_OFF,
+        "zfs_snapshot_folder": STATE_ON,
+    }
+    ent_reg = er.async_get(hass)
+    for suffix, value in expected.items():
+        entity_id = f"{BINARY_PREFIX}_{suffix}"
+        state = hass.states.get(entity_id)
+        assert state is not None
+        assert state.state == value, suffix
+        assert "device_class" not in state.attributes
+        reg_entry = ent_reg.async_get(entity_id)
+        assert reg_entry is not None
+        assert reg_entry.entity_category is EntityCategory.DIAGNOSTIC
+        assert reg_entry.translation_key == suffix
+
+    # A setting that changes is picked up on the next update
+    storage_box["access_settings"]["samba_enabled"] = True
+    _mock_box(aioclient_mock, storage_box)
+    await _tick(hass)
+    assert hass.states.get(f"{BINARY_PREFIX}_samba").state == STATE_ON  # type: ignore[union-attr]
 
 
-@pytest.mark.parametrize(
-    ("unit", "expected"),
-    [
-        (
-            "B",
-            {
-                "total": "1000000000000.0",
-                "used": "300000000000.0",
-                "data": "250000000000.0",
-                "snapshots": "50000000000.0",
-                "free": "700000000000.0",
-            },
-        ),
-        (
-            "MB",
-            {
-                "total": "1000000.0",
-                "used": "300000.0",
-                "data": "250000.0",
-                "snapshots": "50000.0",
-                "free": "700000.0",
-            },
-        ),
-        (
-            "GB",
-            {
-                "total": "1000.0",
-                "used": "300.0",
-                "data": "250.0",
-                "snapshots": "50.0",
-                "free": "700.0",
-            },
-        ),
-        (
-            "TB",
-            {
-                "total": "1.0",
-                "used": "0.3",
-                "data": "0.25",
-                "snapshots": "0.05",
-                "free": "0.7",
-            },
-        ),
-    ],
-)
-async def test_size_sensors_units(
+async def test_access_setting_missing_is_unknown(
     hass: HomeAssistant,
     aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
     storage_box: dict[str, Any],
-    unit: str,
-    expected: dict[str, str],
 ) -> None:
-    """Size sensors convert bytes to the configured unit with data size metadata."""
-    entry = _make_entry(hass, unit=unit)
+    """A setting the API leaves out or sends as null is unknown, not off."""
+    del storage_box["access_settings"]["webdav_enabled"]
+    storage_box["access_settings"]["samba_enabled"] = None
     _mock_box(aioclient_mock, storage_box)
-    await _setup(hass, entry)
+    await _setup(hass, config_entry)
+
+    for suffix in ("webdav", "samba"):
+        state = hass.states.get(f"{BINARY_PREFIX}_{suffix}")
+        assert state is not None
+        assert state.state == STATE_UNKNOWN, suffix
+    assert hass.states.get(f"{BINARY_PREFIX}_ssh").state == STATE_ON  # type: ignore[union-attr]
+
+
+# Values of the fixture in GiB, the unit of new size sensors
+GIB = 1024**3
+EXPECTED_GIB = {
+    "total": 1024.0,
+    "used": 300_000_000_000 / GIB,
+    "data": 250_000_000_000 / GIB,
+    "snapshots": 50_000_000_000 / GIB,
+    "free": 1024.0 - 300_000_000_000 / GIB,
+}
+
+
+async def test_size_sensors_default_to_gib(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    storage_box: dict[str, Any],
+) -> None:
+    """New size sensors show the bytes of the API in GiB with data size metadata."""
+    _mock_box(aioclient_mock, storage_box)
+    await _setup(hass, config_entry)
 
     ent_reg = er.async_get(hass)
     for metric, suffix in SIZE_ENTITIES.items():
         entity_id = f"{PREFIX}_{suffix}"
         state = hass.states.get(entity_id)
         assert state is not None
-        assert state.state == expected[metric], metric
-        assert state.attributes["unit_of_measurement"] == unit
+        assert float(state.state) == pytest.approx(EXPECTED_GIB[metric]), metric
+        assert state.attributes["unit_of_measurement"] == "GiB"
         assert state.attributes["device_class"] == "data_size"
         assert state.attributes["state_class"] == "measurement"
-        assert state.attributes["icon"] == "mdi:harddisk"
         reg_entry = ent_reg.async_get(entity_id)
         assert reg_entry is not None
-        assert reg_entry.unique_id == (
-            f"hetzner_storage_box_{STORAGE_BOX_ID}_{metric}_{unit.lower()}"
+        assert reg_entry.unique_id == f"{UID}_{metric}"
+        assert reg_entry.options["sensor.private"] == {
+            "suggested_unit_of_measurement": "GiB"
+        }
+        assert reg_entry.options["sensor"] == {"suggested_display_precision": 2}
+    # A BX11 is a binary terabyte
+    assert hass.states.get(f"{PREFIX}_total_size").state == "1024.0"  # type: ignore[union-attr]
+
+
+@pytest.mark.parametrize(
+    ("unit", "total", "used"),
+    [
+        ("B", "1099511627776", "300000000000"),
+        ("GB", 1099.511627776, 300.0),
+        ("TB", 1.099511627776, 0.3),
+        ("TiB", 1.0, 300_000_000_000 / 1024**4),
+    ],
+)
+async def test_size_sensor_unit_from_entity_settings(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    storage_box: dict[str, Any],
+    unit: str,
+    total: str | float,
+    used: str | float,
+) -> None:
+    """The unit is changed per entity in its settings; HA converts the bytes."""
+    _mock_box(aioclient_mock, storage_box)
+    await _setup(hass, config_entry)
+    ent_reg = er.async_get(hass)
+
+    for suffix, expected in (("total_size", total), ("total_used", used)):
+        entity_id = f"{PREFIX}_{suffix}"
+        ent_reg.async_update_entity_options(
+            entity_id, "sensor", {"unit_of_measurement": unit}
         )
+        await hass.async_block_till_done()
+
+        state = hass.states.get(entity_id)
+        assert state is not None
+        assert state.attributes["unit_of_measurement"] == unit
+        if isinstance(expected, str):
+            # Bytes are the native value, passed on unconverted
+            assert state.state == expected
+        else:
+            assert float(state.state) == pytest.approx(expected)
 
 
-async def test_size_sensor_rounding(
+async def test_size_sensor_not_rounded(
     hass: HomeAssistant,
     aioclient_mock: AiohttpClientMocker,
     config_entry: MockConfigEntry,
     storage_box: dict[str, Any],
 ) -> None:
-    """Converted values are rounded to two decimals."""
+    """The state keeps every byte; the frontend rounds to the display precision."""
     storage_box["stats"]["size"] = 1_234_567_890
     _mock_box(aioclient_mock, storage_box)
     await _setup(hass, config_entry)
 
     state = hass.states.get(f"{PREFIX}_total_used")
     assert state is not None
-    assert state.state == "1.23"
+    assert float(state.state) == pytest.approx(1_234_567_890 / GIB, abs=1e-12)
 
 
 async def test_free_space_clamped(
@@ -296,7 +388,7 @@ async def test_free_space_clamped(
 
     state = hass.states.get(f"{PREFIX}_free_space")
     assert state is not None
-    assert state.state == "0.0"
+    assert float(state.state) == 0
 
 
 async def test_missing_stats_and_type(
@@ -314,7 +406,7 @@ async def test_missing_stats_and_type(
     for suffix in SIZE_ENTITIES.values():
         state = hass.states.get(f"{PREFIX}_{suffix}")
         assert state is not None
-        assert state.state == "0.0", suffix
+        assert float(state.state) == 0, suffix
 
     state = hass.states.get(PREFIX)
     assert state is not None
@@ -357,13 +449,14 @@ async def test_empty_storage_box(
     assert location is not None
     assert location.state == STATE_UNKNOWN
     assert location.attributes["city"] is None
-    access = hass.states.get(f"{prefix}_access_options")
-    assert access is not None
-    assert access.state == "0"
+    for entity_id in BINARY_ENTITIES:
+        access = hass.states.get(entity_id.replace("backup", STORAGE_BOX_ID))
+        assert access is not None
+        assert access.state == STATE_UNKNOWN, entity_id
     for suffix in SIZE_ENTITIES.values():
         state = hass.states.get(f"{prefix}_{suffix}")
         assert state is not None
-        assert state.state == "0.0", suffix
+        assert float(state.state) == 0, suffix
 
 
 async def test_missing_storage_box_key(
@@ -376,9 +469,9 @@ async def test_missing_storage_box_key(
     await _setup(hass, config_entry)
 
     assert config_entry.state is ConfigEntryState.LOADED
-    state = hass.states.get(f"sensor.storage_box_{STORAGE_BOX_ID}_access_options")
+    state = hass.states.get(f"binary_sensor.storage_box_{STORAGE_BOX_ID}_ssh")
     assert state is not None
-    assert state.state == "0"
+    assert state.state == STATE_UNKNOWN
 
 
 @pytest.mark.parametrize(
@@ -406,7 +499,7 @@ async def test_first_refresh_error(
     assert config_entry.state is ConfigEntryState.SETUP_RETRY
     assert aioclient_mock.call_count == 1
     assert not hasattr(config_entry, "runtime_data")
-    assert hass.states.async_entity_ids("sensor") == []
+    assert hass.states.async_entity_ids() == []
     ent_reg = er.async_get(hass)
     assert er.async_entries_for_config_entry(ent_reg, config_entry.entry_id) == []
 
@@ -479,41 +572,234 @@ def _reauth_flows(hass: HomeAssistant) -> list[Any]:
     ]
 
 
-@pytest.mark.parametrize("status", [401, 403])
+@pytest.mark.parametrize(
+    ("status", "body", "detail"),
+    [
+        (401, {"error": {"code": "unauthorized"}}, "HTTP 401 (unauthorized)"),
+        (403, {"error": {"code": "forbidden"}}, "HTTP 403 (forbidden)"),
+        # No readable error code: assume missing permissions
+        (403, {"storage_box": {}}, "HTTP 403"),
+    ],
+)
 async def test_first_refresh_auth_failed(
     hass: HomeAssistant,
     aioclient_mock: AiohttpClientMocker,
     config_entry: MockConfigEntry,
-    storage_box: dict[str, Any],
     status: int,
+    body: dict[str, Any],
+    detail: str,
 ) -> None:
     """A rejected API key fails setup without retrying and starts reauth."""
-    aioclient_mock.get(BOX_URL, json={"storage_box": storage_box}, status=status)
+    aioclient_mock.get(BOX_URL, json=body, status=status)
     await _setup(hass, config_entry)
 
     assert config_entry.state is ConfigEntryState.SETUP_ERROR
+    assert config_entry.reason == f"The Hetzner API rejected the API token: {detail}"
     assert aioclient_mock.call_count == 1
-    assert hass.states.async_entity_ids("sensor") == []
+    assert hass.states.async_entity_ids() == []
     flows = _reauth_flows(hass)
     assert len(flows) == 1
     assert flows[0]["step_id"] == "reauth_confirm"
     assert flows[0]["context"]["entry_id"] == config_entry.entry_id
 
 
-async def test_first_refresh_storage_box_not_found(
+@pytest.mark.parametrize(
+    "mock_kwargs",
+    [
+        {"status": 403, "json": {"error": {"code": "maintenance"}}},
+        {"status": 403, "json": {"error": {"code": "resource_limit_exceeded"}}},
+        {"status": 429, "json": {"error": {"code": "rate_limit_exceeded"}}},
+    ],
+)
+async def test_first_refresh_temporary_api_error(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    mock_kwargs: dict[str, Any],
+) -> None:
+    """Maintenance and rate limits retry setup instead of asking for a new key."""
+    aioclient_mock.get(BOX_URL, **mock_kwargs)
+    await _setup(hass, config_entry)
+
+    assert config_entry.state is ConfigEntryState.SETUP_RETRY
+    code = mock_kwargs["json"]["error"]["code"]
+    assert config_entry.reason == (
+        f"The Hetzner API returned an error: HTTP {mock_kwargs['status']} ({code})"
+    )
+    assert _reauth_flows(hass) == []
+
+
+async def test_first_refresh_connection_error_reason(
     hass: HomeAssistant,
     aioclient_mock: AiohttpClientMocker,
     config_entry: MockConfigEntry,
 ) -> None:
-    """A deleted storage box fails setup without retrying or reauth."""
-    aioclient_mock.get(BOX_URL, status=404)
+    """A timeout is shown with a translated reason."""
+    aioclient_mock.get(BOX_URL, exc=asyncio.TimeoutError)
     await _setup(hass, config_entry)
 
-    assert config_entry.state is ConfigEntryState.SETUP_ERROR
-    assert config_entry.reason == f"Storage box {STORAGE_BOX_ID} not found"
+    assert config_entry.state is ConfigEntryState.SETUP_RETRY
+    assert config_entry.reason == (
+        "Could not connect to the Hetzner API: Timeout connecting to the Hetzner API"
+    )
+
+
+def _not_found_issue(hass: HomeAssistant, entry: MockConfigEntry) -> Any:
+    """Return the storage box not found repair issue of an entry, if any."""
+    return ir.async_get(hass).async_get_issue(
+        DOMAIN, f"storage_box_not_found_{entry.entry_id}"
+    )
+
+
+async def test_first_refresh_storage_box_not_found(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    storage_box: dict[str, Any],
+) -> None:
+    """A box the API cannot find retries setup and raises a repair issue."""
+    aioclient_mock.get(BOX_URL, status=404, json={"error": {"code": "not_found"}})
+    await _setup(hass, config_entry)
+
+    # Not a setup error: the token may only lack access for now
+    assert config_entry.state is ConfigEntryState.SETUP_RETRY
+    assert config_entry.reason == (
+        f"Storage box {STORAGE_BOX_ID} not found — deleted, or not accessible "
+        "with this API token"
+    )
     assert aioclient_mock.call_count == 1
     assert _reauth_flows(hass) == []
-    assert hass.states.async_entity_ids("sensor") == []
+    assert hass.states.async_entity_ids() == []
+
+    issue = _not_found_issue(hass, config_entry)
+    assert issue is not None
+    assert issue.domain == DOMAIN
+    assert issue.is_fixable is False
+    assert issue.severity is ir.IssueSeverity.ERROR
+    assert issue.translation_key == "storage_box_not_found"
+    assert issue.translation_placeholders == {"storage_box_id": STORAGE_BOX_ID}
+
+    _mock_box(aioclient_mock, storage_box)
+    await hass.config_entries.async_reload(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert config_entry.state is ConfigEntryState.LOADED
+    assert _not_found_issue(hass, config_entry) is None
+
+
+async def test_later_refresh_storage_box_not_found(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    storage_box: dict[str, Any],
+) -> None:
+    """A box that disappears raises an issue, keeps polling and recovers."""
+    _mock_box(aioclient_mock, storage_box)
+    await _setup(hass, config_entry)
+    assert _not_found_issue(hass, config_entry) is None
+
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(BOX_URL, status=404)
+    await _tick(hass)
+
+    assert config_entry.state is ConfigEntryState.LOADED
+    assert _not_found_issue(hass, config_entry) is not None
+    assert _reauth_flows(hass) == []
+    for entity_id in EXPECTED_ENTITIES:
+        state = hass.states.get(entity_id)
+        assert state is not None
+        assert state.state == STATE_UNAVAILABLE, entity_id
+
+    # Polling goes on, so the box is found again without a reload
+    _mock_box(aioclient_mock, storage_box)
+    await _tick(hass)
+
+    assert _not_found_issue(hass, config_entry) is None
+    assert hass.states.get(PREFIX).state == "active"  # type: ignore[union-attr]
+
+
+async def test_auth_error_after_not_found_deletes_issue(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    storage_box: dict[str, Any],
+) -> None:
+    """Reauth stops polling, so the issue saying HA retries goes away."""
+    _mock_box(aioclient_mock, storage_box)
+    await _setup(hass, config_entry)
+
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(BOX_URL, status=404)
+    await _tick(hass)
+    assert _not_found_issue(hass, config_entry) is not None
+
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(BOX_URL, status=401)
+    await _tick(hass)
+
+    assert _not_found_issue(hass, config_entry) is None
+    assert len(_reauth_flows(hass)) == 1
+
+
+async def test_unload_entry_deletes_issue(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    storage_box: dict[str, Any],
+) -> None:
+    """Nothing retries after unloading, so the issue goes away."""
+    _mock_box(aioclient_mock, storage_box)
+    await _setup(hass, config_entry)
+
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(BOX_URL, status=404)
+    await _tick(hass)
+    assert _not_found_issue(hass, config_entry) is not None
+
+    assert await hass.config_entries.async_unload(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert config_entry.state is ConfigEntryState.NOT_LOADED
+    assert _not_found_issue(hass, config_entry) is None
+
+
+async def test_remove_entry_deletes_issue(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+) -> None:
+    """Deleting the entry removes its repair issue."""
+    aioclient_mock.get(BOX_URL, status=404)
+    await _setup(hass, config_entry)
+    assert _not_found_issue(hass, config_entry) is not None
+
+    assert await hass.config_entries.async_remove(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert _not_found_issue(hass, config_entry) is None
+
+
+async def test_later_refresh_maintenance_keeps_key(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    storage_box: dict[str, Any],
+) -> None:
+    """Maintenance after setup makes entities unavailable without reauth."""
+    _mock_box(aioclient_mock, storage_box)
+    await _setup(hass, config_entry)
+
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(BOX_URL, status=403, json={"error": {"code": "maintenance"}})
+    await _tick(hass)
+
+    assert _reauth_flows(hass) == []
+    assert hass.states.get(PREFIX).state == STATE_UNAVAILABLE  # type: ignore[union-attr]
+
+    _mock_box(aioclient_mock, storage_box)
+    await _tick(hass)
+
+    assert hass.states.get(PREFIX).state == "active"  # type: ignore[union-attr]
 
 
 async def test_later_refresh_auth_failed(
@@ -549,9 +835,13 @@ async def test_missing_storage_box_id(
 
     assert entry.state is ConfigEntryState.SETUP_ERROR
     assert not hasattr(entry, "runtime_data")
-    assert "No storage box id in config entry" in caplog.text
+    assert entry.reason == (
+        "The config entry has no storage box ID. Delete it and add the "
+        "integration again"
+    )
+    assert "The config entry has no storage box ID" in caplog.text
     assert aioclient_mock.call_count == 0
-    assert hass.states.async_entity_ids("sensor") == []
+    assert hass.states.async_entity_ids() == []
     ent_reg = er.async_get(hass)
     assert er.async_entries_for_config_entry(ent_reg, entry.entry_id) == []
 
@@ -565,7 +855,7 @@ async def test_unload_entry(
     """Unloading the entry removes its data and makes entities unavailable."""
     _mock_box(aioclient_mock, storage_box)
     await _setup(hass, config_entry)
-    assert config_entry.runtime_data.coordinator.data == storage_box
+    assert config_entry.runtime_data.data == storage_box
 
     assert await hass.config_entries.async_unload(config_entry.entry_id)
     await hass.async_block_till_done()
@@ -580,22 +870,171 @@ async def test_unload_entry(
 def test_size_sensor_invalid_metric() -> None:
     """An unknown metric raises ValueError."""
     with pytest.raises(ValueError, match="Invalid metric"):
-        HetznerSizeSensor(MagicMock(), STORAGE_BOX_ID, "bogus", "GB")
+        HetznerSizeSensor(MagicMock(), STORAGE_BOX_ID, "bogus")
 
 
-def test_size_sensor_unknown_unit_falls_back_to_bytes() -> None:
-    """An unknown display unit leaves the byte value unconverted."""
+def test_size_sensor_native_bytes() -> None:
+    """Size sensors report the API's bytes as integers in bytes."""
     coordinator = MagicMock()
-    coordinator.data = {"storage_box_type": {"size": 1_000_000}}
-    sensor = HetznerSizeSensor(coordinator, STORAGE_BOX_ID, "total", "KiB")
-    assert sensor.native_value == 1_000_000.0
-    assert sensor.unique_id == f"hetzner_storage_box_{STORAGE_BOX_ID}_total_kib"
+    coordinator.data = {"storage_box_type": {"size": 2**40}}
+    sensor = HetznerSizeSensor(coordinator, STORAGE_BOX_ID, "total")
+    assert sensor.native_value == 2**40
+    assert isinstance(sensor.native_value, int)
+    assert sensor.native_unit_of_measurement == UnitOfInformation.BYTES
+    assert sensor.suggested_unit_of_measurement == UnitOfInformation.GIBIBYTES
+    assert sensor.suggested_display_precision == 2
+    assert sensor.unique_id == f"{UID}_total"
 
 
 def test_size_sensor_without_coordinator_data() -> None:
     """A coordinator without data reports zero."""
     coordinator = MagicMock()
     coordinator.data = None
-    sensor = HetznerSizeSensor(coordinator, STORAGE_BOX_ID, "free", "GB")
-    assert sensor.native_value == 0.0
+    sensor = HetznerSizeSensor(coordinator, STORAGE_BOX_ID, "free")
+    assert sensor.native_value == 0
     assert sensor.device_info["name"] == f"Storage Box {STORAGE_BOX_ID}"
+
+
+def test_binary_sensor_without_coordinator_data() -> None:
+    """A coordinator without data reports every access setting as unknown."""
+    coordinator = MagicMock()
+    coordinator.data = None
+    sensor = HetznerAccessSettingBinarySensor(
+        coordinator, STORAGE_BOX_ID, ACCESS_SETTINGS[0]
+    )
+    assert sensor.is_on is None
+
+
+# translation_key -> English name, which also makes up the entity_id
+TRANSLATED_ENTITIES = {
+    f"{PREFIX}_location": ("location", "Location"),
+    f"{PREFIX}_total_size": ("total_size", "Total size"),
+    f"{PREFIX}_total_used": ("total_used", "Total used"),
+    f"{PREFIX}_data_size": ("data_size", "Data size"),
+    f"{PREFIX}_snapshot_size": ("snapshot_size", "Snapshot size"),
+    f"{PREFIX}_free_space": ("free_space", "Free space"),
+    f"{BINARY_PREFIX}_reachable_externally": (
+        "reachable_externally",
+        "Reachable externally",
+    ),
+    f"{BINARY_PREFIX}_samba": ("samba", "Samba"),
+    f"{BINARY_PREFIX}_ssh": ("ssh", "SSH"),
+    f"{BINARY_PREFIX}_webdav": ("webdav", "WebDAV"),
+    f"{BINARY_PREFIX}_zfs_snapshot_folder": (
+        "zfs_snapshot_folder",
+        "ZFS snapshot folder",
+    ),
+}
+
+
+async def test_entity_names_from_translations(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    storage_box: dict[str, Any],
+) -> None:
+    """Entities are named through translation keys; the status takes the device's."""
+    _mock_box(aioclient_mock, storage_box)
+    await _setup(hass, config_entry)
+    ent_reg = er.async_get(hass)
+
+    status = ent_reg.async_get(PREFIX)
+    assert status is not None
+    assert status.translation_key == "status"
+    assert status.original_name is None
+
+    for entity_id, (key, name) in TRANSLATED_ENTITIES.items():
+        reg_entry = ent_reg.async_get(entity_id)
+        assert reg_entry is not None
+        assert reg_entry.translation_key == key
+        assert reg_entry.original_name == name
+        assert reg_entry.original_icon is None
+        state = hass.states.get(entity_id)
+        assert state is not None
+        assert state.attributes["friendly_name"] == f"Storage Box backup {name}"
+        # The frontend picks the icon from icons.json
+        assert "icon" not in state.attributes
+
+
+async def test_icons_cover_translation_keys(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    storage_box: dict[str, Any],
+) -> None:
+    """icons.json has an icon for every entity translation key."""
+    _mock_box(aioclient_mock, storage_box)
+    await _setup(hass, config_entry)
+
+    all_icons = (await async_get_icons(hass, "entity", [DOMAIN]))[DOMAIN]
+    reg_entries = er.async_entries_for_config_entry(
+        er.async_get(hass), config_entry.entry_id
+    )
+    for platform in ("sensor", "binary_sensor"):
+        assert set(all_icons[platform]) == {
+            e.translation_key for e in reg_entries if e.domain == platform
+        }
+    icons = all_icons["sensor"]
+    assert icons["status"] == {
+        "default": "mdi:database",
+        "state": {
+            "initializing": "mdi:database-sync",
+            "locked": "mdi:database-lock",
+        },
+    }
+    assert icons["location"] == {"default": "mdi:map-marker"}
+    for key in SIZE_TRANSLATION_KEYS.values():
+        assert icons[key] == {"default": "mdi:harddisk"}
+    # Binary sensors switch their icon with the state
+    for key, value in all_icons["binary_sensor"].items():
+        assert set(value["state"]) == {"on", "off"}, key
+        assert value["state"]["on"] != value["state"]["off"], key
+
+
+@pytest.mark.parametrize("status", ["active", "initializing", "locked"])
+async def test_status_sensor_known_states(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    storage_box: dict[str, Any],
+    status: str,
+) -> None:
+    """Every documented status is a valid state of the enum sensor."""
+    storage_box["status"] = status
+    # Nullable while the box is initializing
+    storage_box["username"] = None
+    _mock_box(aioclient_mock, storage_box)
+    await _setup(hass, config_entry)
+
+    state = hass.states.get(PREFIX)
+    assert state is not None
+    assert state.state == status
+    assert state.attributes["username"] is None
+
+
+async def test_status_sensor_unknown_status(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    storage_box: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A status the integration does not know is reported as unknown, logged once."""
+    storage_box["status"] = "migrating"
+    _mock_box(aioclient_mock, storage_box)
+    await _setup(hass, config_entry)
+
+    state = hass.states.get(PREFIX)
+    assert state is not None
+    assert state.state == STATE_UNKNOWN
+    # The details stay available
+    assert state.attributes["name"] == "backup"
+
+    await _tick(hass)
+    await _tick(hass)
+    assert caplog.text.count("Unknown status 'migrating'") == 1
+
+    storage_box["status"] = "active"
+    _mock_box(aioclient_mock, storage_box)
+    await _tick(hass)
+    assert hass.states.get(PREFIX).state == "active"  # type: ignore[union-attr]

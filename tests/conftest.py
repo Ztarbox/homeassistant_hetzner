@@ -6,19 +6,13 @@ from collections.abc import Generator
 import copy
 from typing import Any
 
+from homeassistant.const import CONF_API_KEY, CONF_HOST
 import pytest
 from pytest_homeassistant_custom_component.common import (  # type: ignore[import-untyped]
     MockConfigEntry,
 )
 
-from custom_components.hetzner.const import (
-    CONF_API_KEY,
-    CONF_HOST,
-    CONF_STORAGE_BOX_ID,
-    CONF_UNIT,
-    DEFAULT_HOST,
-    DOMAIN,
-)
+from custom_components.hetzner.const import CONF_STORAGE_BOX_ID, DEFAULT_HOST, DOMAIN
 
 API_KEY = "test-api-key"
 STORAGE_BOX_ID = "123456"
@@ -36,7 +30,8 @@ STORAGE_BOX: dict[str, Any] = {
     "storage_box_type": {
         "name": "bx11",
         "description": "BX11",
-        "size": 1_000_000_000_000,
+        # A BX11 ("1 TB") reports a binary terabyte
+        "size": 2**40,
     },
     "location": {
         "id": 1,
@@ -95,14 +90,13 @@ def config_entry(hass) -> MockConfigEntry:
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Hetzner backup",
-        version=4,
+        version=5,
         unique_id=STORAGE_BOX_ID,
         data={
             CONF_API_KEY: API_KEY,
             CONF_HOST: DEFAULT_HOST,
             CONF_STORAGE_BOX_ID: STORAGE_BOX_ID,
         },
-        options={CONF_UNIT: "GB"},
     )
     entry.add_to_hass(hass)
     return entry
