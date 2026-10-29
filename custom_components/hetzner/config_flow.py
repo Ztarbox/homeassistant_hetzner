@@ -259,7 +259,7 @@ class HetznerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._abort_if_unique_id_configured()
                 # Create config entry with selected storage box
                 return self.async_create_entry(
-                    title=f"Hetzner {selected_box['name']}",
+                    title=f"Hetzner {selected_box['name'] or selected_box_id}",
                     data={
                         CONF_API_KEY: self.data[CONF_API_KEY],
                         CONF_HOST: self.data[CONF_HOST],

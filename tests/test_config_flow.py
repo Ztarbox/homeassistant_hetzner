@@ -222,6 +222,27 @@ async def test_storage_box_step_box_changed_before_submit(
     assert result["data"][CONF_STORAGE_BOX_ID] == STORAGE_BOX_ID
 
 
+async def test_storage_box_without_name_uses_id_in_title(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    storage_box: dict[str, Any],
+) -> None:
+    """Test a box without a name gets its ID in the entry title."""
+    storage_box["name"] = None
+    aioclient_mock.get(LIST_URL, **_list_payload(storage_box))
+
+    result = await _start_flow(hass)
+    result = await _submit_key(hass, result["flow_id"])
+    with patch("custom_components.hetzner.async_setup_entry", return_value=True):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_STORAGE_BOX_ID: STORAGE_BOX_ID}
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == f"Hetzner {STORAGE_BOX_ID}"
+
+
 @pytest.mark.parametrize(
     "list_response",
     [
