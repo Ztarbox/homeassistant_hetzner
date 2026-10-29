@@ -17,6 +17,7 @@ from .const import (
     DEFAULT_HOST,
     DEFAULT_UNIT,
     DOMAIN,
+    UNIT_OPTIONS,
 )
 from .coordinator import HetznerDataUpdateCoordinator
 
@@ -24,7 +25,8 @@ _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.SENSOR]
 SIZE_METRICS = {"total", "used", "data", "snapshots", "free"}
-VALID_UNITS = {"b", "mb", "gb", "tb", "kib", "mib", "gib", "tib"}
+# Unit suffixes of size sensor unique_ids; only units the flows offer
+VALID_UNITS = {unit.lower() for unit in UNIT_OPTIONS}
 
 
 def _update_sensor_unit_options(
