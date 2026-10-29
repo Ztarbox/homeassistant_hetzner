@@ -17,7 +17,11 @@
   - [Changing the Unit](#changing-the-unit)
   - [Replacing the API Key](#replacing-the-api-key)
 - [Sensors and Attributes](#sensors-and-attributes)
+- [Binary Sensors](#binary-sensors)
 - [Update Interval](#update-interval)
+- [Troubleshooting](#troubleshooting)
+  - [Storage Box Not Found](#storage-box-not-found)
+  - [API Errors and Maintenance](#api-errors-and-maintenance)
 - [Removing the Integration](#removing-the-integration)
 - [Development](#development)
 
@@ -27,7 +31,7 @@
 **Hetzner Storage Box**  
 
 Home Assistant custom component that exposes storage metrics for your [Hetzner Storage Box](https://www.hetzner.com/storage/storage-box/) via the official JSON API.  
-Track **total, used, free, data and snapshot sizes** as native size sensors in your configured unit (`B`, `MB`, `GB`, or `TB`), plus a status sensor that shows the box state and enriches it with details such as type, creation date and server name. Also a `location` sensor is available to show details of where your data is stored.
+Track **total, used, free, data and snapshot sizes** as native data size sensors (shown in GiB by default, any other unit can be picked per sensor), plus a status sensor that shows the box state and enriches it with details such as type, creation date and server name. Also a `location` sensor is available to show details of where your data is stored, and binary sensors show which access methods (SSH, Samba, WebDAV, external reachability, ZFS snapshot folder) are enabled.
 Perfect for monitoring your off-site backup space and add it to dashboards, automations and long-term statistics.
 
 ## Installation
@@ -56,10 +60,13 @@ home-assistant/
 │   └── hetzner/
 │       ├── brand/
 │       ├── __init__.py
+│       ├── api.py
+│       ├── binary_sensor.py
 │       ├── config_flow.py
 │       ├── const.py
 │       ├── coordinator.py
 │       ├── entity.py
+│       ├── icons.json
 │       ├── manifest.json
 │       ├── sensor.py
 │       ├── strings.json
@@ -78,27 +85,34 @@ To obtain one, sign in into the [Hetzner Console](https://console.hetzner.com) a
 1. In Home Assistant, navigate to **Settings** > **Devices & Services**
 2. Click **Add Integration** and search for "Hetzner"
 3. Enter your API key when prompted
-4. Select the desired unit of measurement (`B`, `MB`, `GB`, or `TB`). The default is `B`.
-5. Select the Storage Box you would like to configure
-6. Complete the configuration flow
+4. Select the Storage Box you would like to configure
+5. Complete the configuration flow
 
 To monitor more than one Storage Box, add the integration once per box.
 
 ### Changing the Unit
 
-Open **Settings** > **Devices & Services** > **Hetzner Storage Box**, click **Configure** and select a new unit. The size sensors keep their entity IDs.
+The size sensors report bytes and Home Assistant converts them for display. New sensors are shown in GiB, because Hetzner sizes are binary: a BX11 ("1 TB") has 1 TiB = 1,024 GiB (about 1,099.51 GB).
+
+To show a sensor in another unit (for example `GB`, `TB` or `TiB`), open the sensor, click the gear icon (**Settings**) and pick a **Unit of measurement**. The setting applies to that sensor only; Home Assistant converts history and long-term statistics to the new unit.
+
+Earlier versions had a single unit setting (`B`, `MB`, `GB` or `TB`) in the integration options. When updating, each size sensor gets the unit chosen there as its unit of measurement, unless a different unit was already set on the sensor, so dashboards and long-term statistics continue unchanged; change it per sensor as described above.
+
+Two exceptions affect long-term statistics once after the update:
+- Size sensors of version 0.3.x or earlier, which had no unit setting and reported the unit `bytes`, now report `B`. Home Assistant treats this as a changed unit and stops compiling statistics for them until you open **Developer tools** > **Statistics**, click **Fix issue** on these sensors and confirm the new unit `B` (the values are the same).
+- The former `access_options` sensor is removed by the update and replaced by the [binary sensors](#binary-sensors). Its long-term statistics are kept; **Developer tools** > **Statistics** lists them as having no state, where **Fix issue** deletes them.
 
 ### Replacing the API Key
 
-If the Hetzner API rejects the API key, for example because the token was revoked, Home Assistant shows a **Reauthenticate** notice for the integration. Follow it and enter a new API key of the same project.
+If the Hetzner API rejects the API key, for example because the token was revoked or lacks permissions, Home Assistant shows a **Reauthenticate** notice for the integration. Follow it and enter a new API key of the same project. Temporary errors such as Hetzner maintenance or rate limits do not ask for a new key; see [API Errors and Maintenance](#api-errors-and-maintenance).
 
 
 ## Sensors and Attributes
 
-The integration provides the following sensors:
+The integration provides the following sensors. Their names follow the Home Assistant language, the entity IDs stay English in every language (also for the [binary sensors](#binary-sensors)):
 
 #### sensor.storage_box_&lt;boxname&gt;
-- **State**: The current status of the storage box
+- **State**: The current status of the storage box: `active`, `initializing` or `locked` (shown translated in the UI). A status the integration does not know yet is shown as unknown.
 - **Attributes**:
   - `id`: The id of your storage box
   - `name`: The name of your storage box
@@ -119,39 +133,53 @@ The integration provides the following sensors:
   - `description`: Full name of the location
 
 #### sensor.storage_box_&lt;boxname&gt;_total_size
-- **State**: The total size of your storage box plan in the configured unit
-- **Unit**: User-selected unit (`B`, `MB`, `GB`, or `TB`)
+- **State**: The total size of your storage box plan
+- **Unit**: GiB by default, changeable per sensor (see [Changing the Unit](#changing-the-unit))
 
 #### sensor.storage_box_&lt;boxname&gt;_total_used
-- **State**: The total used size in the configured unit
-- **Unit**: User-selected unit (`B`, `MB`, `GB`, or `TB`)
+- **State**: The total used size
+- **Unit**: GiB by default, changeable per sensor (see [Changing the Unit](#changing-the-unit))
 
 #### sensor.storage_box_&lt;boxname&gt;_data_size
-- **State**: The size used for data in the configured unit
-- **Unit**: User-selected unit (`B`, `MB`, `GB`, or `TB`)
+- **State**: The size used for data
+- **Unit**: GiB by default, changeable per sensor (see [Changing the Unit](#changing-the-unit))
 
 #### sensor.storage_box_&lt;boxname&gt;_snapshot_size
-- **State**: The size used for snapshots in the configured unit
-- **Unit**: User-selected unit (`B`, `MB`, `GB`, or `TB`)
+- **State**: The size used for snapshots
+- **Unit**: GiB by default, changeable per sensor (see [Changing the Unit](#changing-the-unit))
 
 #### sensor.storage_box_&lt;boxname&gt;_free_space
-- **State**: The available free space in your Storage Box in the configured unit
-- **Unit**: User-selected unit (`B`, `MB`, `GB`, or `TB`)
+- **State**: The available free space in your Storage Box
+- **Unit**: GiB by default, changeable per sensor (see [Changing the Unit](#changing-the-unit))
 
-#### sensor.storage_box_&lt;boxname&gt;_access_options
-- **State**: Number of access methods that are enabled (integer)
-- **Attributes**:
-  - `webdav_enabled`: boolean
-  - `zfs_enabled`: boolean
-  - `samba_enabled`: boolean
-  - `ssh_enabled`: boolean
-  - `reachable_externally`: boolean
+## Binary Sensors
 
-**Example:** with `samba_enabled`, `ssh_enabled`, `reachable_externally` set to `true`, the sensor state will be `3`.
+One binary sensor per access setting of the Storage Box shows whether it is enabled (`on`) or disabled (`off`). They are diagnostic entities, so they appear under **Diagnostic** on the device page. A setting the API does not report shows as unknown.
+
+| Entity ID | Shows whether |
+| --- | --- |
+| `binary_sensor.storage_box_<boxname>_ssh` | SSH/SFTP access is enabled |
+| `binary_sensor.storage_box_<boxname>_samba` | Samba/CIFS access is enabled |
+| `binary_sensor.storage_box_<boxname>_webdav` | WebDAV access is enabled |
+| `binary_sensor.storage_box_<boxname>_reachable_externally` | The Storage Box is reachable from outside the Hetzner network |
+| `binary_sensor.storage_box_<boxname>_zfs_snapshot_folder` | The ZFS snapshot folder is visible |
 
 ## Update Interval
 
 All sensors are automatically updated every 10 minutes to fetch the latest status of your Storage Box.
+
+## Troubleshooting
+
+### Storage Box Not Found
+
+If the Hetzner API answers that the Storage Box was not found, the box was deleted, or it is not accessible with the configured API token (for example a token of another project). The Hetzner API does not tell these cases apart, so the integration keeps retrying, marks the sensors as unavailable and shows a repair issue under **Settings** > **System** > **Repairs**. The issue disappears as soon as the box can be read again, or when the integration entry is unloaded, deleted or asks for a new API key.
+
+- If the box was deleted, delete the integration entry.
+- If the box belongs to another project than the API token, delete the entry and add the integration again with an API token of that project.
+
+### API Errors and Maintenance
+
+Network errors, server errors, rate limits and Hetzner maintenance make the sensors unavailable until the next successful update; Home Assistant keeps retrying on its own. Only a rejected API token (HTTP 401, or 403 for missing permissions) asks for a new API key.
 
 ## Removing the Integration
 
