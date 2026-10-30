@@ -22,6 +22,7 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import (  # type: i
 )
 from yarl import URL
 
+from custom_components.hetzner.api import LIST_PAGE_SIZE
 from custom_components.hetzner.config_flow import HetznerConfigFlow
 from custom_components.hetzner.const import CONF_STORAGE_BOX_ID, DEFAULT_HOST, DOMAIN
 
@@ -225,6 +226,31 @@ async def test_storage_box_step_lists_multiple_boxes(
         BOX_OPTION,
         {"value": "42", "label": "other (ID: 42, Status: initializing)"},
         {"value": "43", "label": "ID: 43, Type: bx21"},
+    ]
+
+
+async def test_storage_box_step_lists_all_pages(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    storage_box: dict[str, Any],
+) -> None:
+    """Test boxes beyond the first page of the list are offered too."""
+    other = {"id": 42, "name": "other", "status": "initializing"}
+    for page, boxes, next_page in ((1, [storage_box], 2), (2, [other], None)):
+        aioclient_mock.get(
+            f"{LIST_URL}?page={page}&per_page={LIST_PAGE_SIZE}",
+            json={
+                "storage_boxes": boxes,
+                "meta": {"pagination": {"page": page, "next_page": next_page}},
+            },
+        )
+
+    result = await _start_flow(hass)
+    result = await _submit_key(hass, result["flow_id"])
+
+    assert _schema(result)[CONF_STORAGE_BOX_ID].config["options"] == [
+        BOX_OPTION,
+        {"value": "42", "label": "other (ID: 42, Status: initializing)"},
     ]
 
 

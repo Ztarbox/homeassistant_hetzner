@@ -11,6 +11,8 @@ from typing import Any
 import aiohttp
 
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=10)
+# Largest page size the API accepts (default 25)
+LIST_PAGE_SIZE = 50
 
 
 class HetznerError(Exception):
@@ -58,9 +60,24 @@ class HetznerClient:
         self._host = host
 
     async def async_list_storage_boxes(self) -> list[dict[str, Any]]:
-        """Return the storage boxes visible to the API token."""
-        data = await self._async_get("storage_boxes")
-        return list(data.get("storage_boxes") or [])
+        """Return the storage boxes visible to the API token.
+
+        The list is paginated: pages are requested until meta.pagination has
+        no next_page. A response without meta counts as the only page.
+        """
+        storage_boxes: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            data = await self._async_get(
+                "storage_boxes", {"page": page, "per_page": LIST_PAGE_SIZE}
+            )
+            boxes = list(data.get("storage_boxes") or [])
+            storage_boxes.extend(boxes)
+            next_page = _next_page(data)
+            # An empty page or a next_page not after this one would never end
+            if not boxes or next_page is None or next_page <= page:
+                return storage_boxes
+            page = next_page
 
     async def async_get_storage_box(self, storage_box_id: str) -> dict[str, Any]:
         """Return one storage box."""
@@ -76,11 +93,14 @@ class HetznerClient:
         data = await self._async_get(f"storage_boxes/{storage_box_id}/subaccounts")
         return list(data.get("subaccounts") or [])
 
-    async def _async_get(self, path: str) -> dict[str, Any]:
+    async def _async_get(
+        self, path: str, params: dict[str, int] | None = None
+    ) -> dict[str, Any]:
         """GET a path below /v1 and return the decoded JSON object."""
         try:
             async with self._session.get(
                 f"https://{self._host}/v1/{path}",
+                params=params,
                 headers={"Authorization": f"Bearer {self._api_key}"},
                 timeout=REQUEST_TIMEOUT,
             ) as resp:
@@ -100,6 +120,19 @@ class HetznerClient:
         if not isinstance(data, dict):
             raise HetznerApiError(200, "invalid_json")
         return data
+
+
+def _next_page(data: dict[str, Any]) -> int | None:
+    """Return meta.pagination.next_page of a list response, if there is one."""
+    meta = data.get("meta")
+    pagination = meta.get("pagination") if isinstance(meta, dict) else None
+    if not isinstance(pagination, dict):
+        return None
+    next_page = pagination.get("next_page")
+    # bool is an int subclass but never a page number
+    if isinstance(next_page, bool) or not isinstance(next_page, int):
+        return None
+    return next_page
 
 
 async def _async_error_code(resp: aiohttp.ClientResponse) -> str | None:

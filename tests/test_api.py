@@ -14,6 +14,7 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import (  # type: i
 )
 
 from custom_components.hetzner.api import (
+    LIST_PAGE_SIZE,
     HetznerApiError,
     HetznerAuthError,
     HetznerClient,
@@ -54,9 +55,101 @@ async def test_list_storage_boxes(
     aioclient_mock.get(LIST_URL, json={"storage_boxes": [storage_box]})
 
     assert await _client(hass).async_list_storage_boxes() == [storage_box]
+    assert aioclient_mock.call_count == 1
     _, url, _, headers = aioclient_mock.mock_calls[0]
-    assert str(url) == LIST_URL
+    assert str(url) == f"{LIST_URL}?page=1&per_page={LIST_PAGE_SIZE}"
     assert headers == {"Authorization": f"Bearer {API_KEY}"}
+
+
+def _page(boxes: list[dict[str, Any]], next_page: Any) -> dict[str, Any]:
+    """Return one page of the storage box list."""
+    return {
+        "storage_boxes": boxes,
+        "meta": {"pagination": {"page": 1, "next_page": next_page}},
+    }
+
+
+def _page_url(page: int) -> str:
+    """Return the list URL of one page."""
+    return f"{LIST_URL}?page={page}&per_page={LIST_PAGE_SIZE}"
+
+
+async def test_list_storage_boxes_pages(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    storage_box: dict[str, Any],
+) -> None:
+    """All pages are fetched by following next_page."""
+    second = {**storage_box, "id": 2}
+    third = {**storage_box, "id": 3}
+    aioclient_mock.get(_page_url(1), json=_page([storage_box], 2))
+    aioclient_mock.get(_page_url(2), json=_page([second], 3))
+    aioclient_mock.get(_page_url(3), json=_page([third], None))
+
+    assert await _client(hass).async_list_storage_boxes() == [
+        storage_box,
+        second,
+        third,
+    ]
+    assert [str(call[1]) for call in aioclient_mock.mock_calls] == [
+        _page_url(1),
+        _page_url(2),
+        _page_url(3),
+    ]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"meta": None},
+        {"meta": {}},
+        {"meta": {"pagination": None}},
+        {"meta": {"pagination": {}}},
+        {"meta": {"pagination": {"next_page": None}}},
+        {"meta": {"pagination": {"next_page": "2"}}},
+        {"meta": {"pagination": {"next_page": True}}},
+        # Not after the current page: would request the same page forever
+        {"meta": {"pagination": {"next_page": 1}}},
+        {"meta": {"pagination": {"next_page": 0}}},
+    ],
+)
+async def test_list_storage_boxes_last_page(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    storage_box: dict[str, Any],
+    payload: dict[str, Any],
+) -> None:
+    """Without a usable next_page the first page is the only one."""
+    aioclient_mock.get(_page_url(1), json={"storage_boxes": [storage_box], **payload})
+
+    assert await _client(hass).async_list_storage_boxes() == [storage_box]
+    assert aioclient_mock.call_count == 1
+
+
+async def test_list_storage_boxes_empty_page(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    storage_box: dict[str, Any],
+) -> None:
+    """An empty page ends the list even if it names a next page."""
+    aioclient_mock.get(_page_url(1), json=_page([storage_box], 2))
+    aioclient_mock.get(_page_url(2), json=_page([], 3))
+
+    assert await _client(hass).async_list_storage_boxes() == [storage_box]
+    assert aioclient_mock.call_count == 2
+
+
+async def test_list_storage_boxes_error_on_later_page(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    storage_box: dict[str, Any],
+) -> None:
+    """An error on a later page is raised, not a partial list returned."""
+    aioclient_mock.get(_page_url(1), json=_page([storage_box], 2))
+    aioclient_mock.get(_page_url(2), status=503)
+
+    with pytest.raises(HetznerApiError):
+        await _client(hass).async_list_storage_boxes()
 
 
 @pytest.mark.parametrize("payload", [{}, {"storage_boxes": None}])
