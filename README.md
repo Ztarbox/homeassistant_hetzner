@@ -105,8 +105,8 @@ To show a sensor in another unit (for example `GB`, `TB` or `TiB`), open the sen
 Earlier versions had a single unit setting (`B`, `MB`, `GB` or `TB`) in the integration options. When updating, each size sensor gets the unit chosen there as its unit of measurement, unless a different unit was already set on the sensor, so dashboards and long-term statistics continue unchanged; change it per sensor as described above.
 
 Two exceptions affect long-term statistics once after the update:
-- Size sensors of version 0.3.x or earlier, which had no unit setting and reported the unit `bytes`, now report `B`. Home Assistant treats this as a changed unit and stops compiling statistics for them until you open **Developer tools** > **Statistics**, click **Fix issue** on these sensors and confirm the new unit `B` (the values are the same).
-- The former `access_options` sensor is removed by the update and replaced by the [binary sensors](#binary-sensors). Its long-term statistics are kept; **Developer tools** > **Statistics** lists them as having no state, where **Fix issue** deletes them.
+- Size sensors of version 0.3.x or earlier, which had no unit setting and reported the unit `bytes`, now report `B`. Home Assistant treats this as a changed unit and stops compiling statistics for them until you open **Tools** > **Statistics**, click **Fix issue** on these sensors and confirm the new unit `B` (the values are the same).
+- The former `access_options` sensor is removed by the update and replaced by the [binary sensors](#binary-sensors). Its long-term statistics are kept; **Tools** > **Statistics** lists them as having no state, where **Fix issue** deletes them.
 
 ### Replacing the API Key
 
@@ -217,7 +217,8 @@ actions:
     data:
       title: Hetzner Storage Box is running full
       message: >-
-        Only {{ states('sensor.storage_box_backup_free_space') | float(0) | round(1) }} GiB
+        Only {{ states('sensor.storage_box_backup_free_space') | float(0) | round(1) }}
+        {{ state_attr('sensor.storage_box_backup_free_space', 'unit_of_measurement') }}
         left. Check the backup retention or upgrade the Storage Box.
 ```
 
@@ -250,7 +251,6 @@ alias: "Storage Box: reachable externally"
 triggers:
   - trigger: state
     entity_id: binary_sensor.storage_box_backup_reachable_externally
-    from: "off"
     to: "on"
 actions:
   - action: notify.mobile_app_my_phone
@@ -258,6 +258,8 @@ actions:
       title: Hetzner Storage Box reachable externally
       message: The Storage Box backup can now be reached from outside the Hetzner network.
 ```
+
+The trigger has no `from: "off"` on purpose: while the Hetzner API cannot be read, the sensor is unavailable, and a switch made in that time arrives as a change from unavailable to `on`, which `from: "off"` would miss. The price is a repeated warning when the sensor comes back from unavailable while external access is still on.
 
 ## Update Interval
 
