@@ -1,9 +1,12 @@
+from collections.abc import Callable
+from dataclasses import dataclass
 import logging
 from typing import Any
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
+    SensorEntityDescription,
     SensorStateClass,
 )
 from homeassistant.const import (
@@ -15,14 +18,12 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .api import as_dict
-from .const import (
-    CONF_STORAGE_BOX_ID,
-    DOMAIN,
-    SIZE_METRICS,
-    SIZE_SUGGESTED_UNIT,
-    STORAGE_BOX_STATUSES,
+from .const import CONF_STORAGE_BOX_ID, SIZE_SUGGESTED_UNIT, STORAGE_BOX_STATUSES
+from .coordinator import (
+    HetznerConfigEntry,
+    HetznerDataUpdateCoordinator,
+    storage_box_unique_id,
 )
-from .coordinator import HetznerConfigEntry, HetznerDataUpdateCoordinator
 from .entity import (
     HetznerEntity,
     HetznerSubaccountEntity,
@@ -33,15 +34,6 @@ _LOGGER = logging.getLogger(__name__)
 
 # Entities only read coordinator data and never call the API themselves
 PARALLEL_UPDATES = 0
-
-# Translation keys of the size sensors, which name the entities
-SIZE_TRANSLATION_KEYS = {
-    "total": "total_size",
-    "used": "total_used",
-    "data": "data_size",
-    "snapshots": "snapshot_size",
-    "free": "free_space",
-}
 
 # English entity names by translation key, the base of new entity_ids in every
 # language; must match translations/en.json (checked by the tests)
@@ -54,6 +46,70 @@ OBJECT_ID_NAMES = {
     "free_space": "Free space",
     "home_directory": "Home directory",
 }
+
+
+def _bytes(values: dict[str, Any], key: str) -> int | None:
+    """Return one size in bytes, None if the API leaves it out or sends no int."""
+    value = values.get(key)
+    # bool is an int subclass but never a size
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+# Unknown rather than 0 when the API leaves a value out: a 0 would end up in
+# the long-term statistics as a real measurement
+def _total_size(box: dict[str, Any]) -> int | None:
+    """Return the size of the storage box type in bytes."""
+    return _bytes(as_dict(box.get("storage_box_type")), "size")
+
+
+def _stats_size(key: str) -> Callable[[dict[str, Any]], int | None]:
+    """Return a function reading one size of the box's stats in bytes."""
+    return lambda box: _bytes(as_dict(box.get("stats")), key)
+
+
+def _free_space(box: dict[str, Any]) -> int | None:
+    """Return the total size minus the total disk usage in bytes."""
+    total = _total_size(box)
+    used = _bytes(as_dict(box.get("stats")), "size")
+    if total is None or used is None:
+        return None
+    # The total disk usage (data and snapshots, as the API counts it)
+    # subtracted, so used and free add up to the total. Clamped to 0 to avoid
+    # negative values
+    return max(0, total - used)
+
+
+@dataclass(frozen=True, kw_only=True)
+class HetznerSizeSensorEntityDescription(SensorEntityDescription):
+    """Describes one size of a storage box."""
+
+    # Reads the size in bytes from the box as the API sent it
+    value_fn: Callable[[dict[str, Any]], int | None]
+
+
+# Size sensors in creation order; the key is the metric of SIZE_METRICS and
+# the end of the unique_id (checked by the tests)
+SIZE_SENSORS: tuple[HetznerSizeSensorEntityDescription, ...] = (
+    HetznerSizeSensorEntityDescription(
+        key="total", translation_key="total_size", value_fn=_total_size
+    ),
+    HetznerSizeSensorEntityDescription(
+        key="used", translation_key="total_used", value_fn=_stats_size("size")
+    ),
+    HetznerSizeSensorEntityDescription(
+        key="data", translation_key="data_size", value_fn=_stats_size("size_data")
+    ),
+    HetznerSizeSensorEntityDescription(
+        key="snapshots",
+        translation_key="snapshot_size",
+        value_fn=_stats_size("size_snapshots"),
+    ),
+    HetznerSizeSensorEntityDescription(
+        key="free", translation_key="free_space", value_fn=_free_space
+    ),
+)
 
 
 async def async_setup_entry(
@@ -71,8 +127,8 @@ async def async_setup_entry(
         HetznerLocationSensor(coordinator, storage_box_id),
     ]
     entities.extend(
-        HetznerSizeSensor(coordinator, storage_box_id, metric)
-        for metric in SIZE_METRICS
+        HetznerSizeSensor(coordinator, storage_box_id, description)
+        for description in SIZE_SENSORS
     )
 
     # No update_before_add: the coordinator already holds fresh data
@@ -86,15 +142,6 @@ async def async_setup_entry(
             ),
         ),
     )
-
-
-def _bytes(values: dict[str, Any], key: str) -> int | None:
-    """Return one size in bytes, None if the API leaves it out or sends no int."""
-    value = values.get(key)
-    # bool is an int subclass but never a size
-    if isinstance(value, bool) or not isinstance(value, int):
-        return None
-    return value
 
 
 class HetznerStatusSensor(HetznerEntity, SensorEntity):
@@ -114,7 +161,7 @@ class HetznerStatusSensor(HetznerEntity, SensorEntity):
         self, coordinator: HetznerDataUpdateCoordinator, storage_box_id: str
     ) -> None:
         super().__init__(coordinator, storage_box_id)
-        self._attr_unique_id = f"{DOMAIN}_storage_box_{self._storage_box_id}"
+        self._attr_unique_id = storage_box_unique_id(self._storage_box_id)
         # Main feature of the device: entity takes the device name
         self._attr_name = None
         self._logged_unknown_status: str | None = None
@@ -163,7 +210,7 @@ class HetznerLocationSensor(HetznerEntity, SensorEntity):
         self, coordinator: HetznerDataUpdateCoordinator, storage_box_id: str
     ) -> None:
         super().__init__(coordinator, storage_box_id)
-        self._attr_unique_id = f"{DOMAIN}_storage_box_{self._storage_box_id}_location"
+        self._attr_unique_id = storage_box_unique_id(self._storage_box_id, "location")
 
     @property
     def native_value(self) -> str | None:
@@ -183,7 +230,7 @@ class HetznerLocationSensor(HetznerEntity, SensorEntity):
 
 
 class HetznerSizeSensor(HetznerEntity, SensorEntity):
-    """Sensor for various storage size metrics."""
+    """One size of the storage box, described by SIZE_SENSORS."""
 
     # The API reports bytes; HA converts them to the unit chosen in the entity
     # settings. New entities default to GiB: Hetzner sizes are binary, a BX11
@@ -195,49 +242,24 @@ class HetznerSizeSensor(HetznerEntity, SensorEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_device_class = SensorDeviceClass.DATA_SIZE
 
+    entity_description: HetznerSizeSensorEntityDescription
+
     def __init__(
         self,
         coordinator: HetznerDataUpdateCoordinator,
         storage_box_id: str,
-        metric: str,
+        description: HetznerSizeSensorEntityDescription,
     ) -> None:
         super().__init__(coordinator, storage_box_id)
-
-        if metric not in SIZE_METRICS:
-            raise ValueError("Invalid metric for HetznerSizeSensor")
-
-        self._metric = metric
-        self._attr_translation_key = SIZE_TRANSLATION_KEYS[metric]
-        self._object_id_name = OBJECT_ID_NAMES[self._attr_translation_key]
-        self._attr_unique_id = (
-            f"{DOMAIN}_storage_box_{self._storage_box_id}_{self._metric}"
+        self.entity_description = description
+        self._object_id_name = OBJECT_ID_NAMES[str(description.translation_key)]
+        self._attr_unique_id = storage_box_unique_id(
+            self._storage_box_id, description.key
         )
 
     @property
     def native_value(self) -> int | None:
-        data = self._box
-        stats = as_dict(data.get("stats"))
-        sb = as_dict(data.get("storage_box_type"))
-
-        # Unknown rather than 0 when the API leaves a value out: a 0 would end
-        # up in the long-term statistics as a real measurement
-        total = _bytes(sb, "size")
-        used = _bytes(stats, "size")
-
-        if self._metric == "total":
-            return total
-        if self._metric == "used":
-            return used
-        if self._metric == "data":
-            return _bytes(stats, "size_data")
-        if self._metric == "snapshots":
-            return _bytes(stats, "size_snapshots")
-        if total is None or used is None:
-            return None
-        # Free space: the total disk usage (data and snapshots, as the API
-        # counts it) subtracted, so used and free add up to the total.
-        # Clamped to 0 to avoid negative values
-        return max(0, total - used)
+        return self.entity_description.value_fn(self._box)
 
 
 class HetznerSubaccountHomeDirectorySensor(HetznerSubaccountEntity, SensorEntity):

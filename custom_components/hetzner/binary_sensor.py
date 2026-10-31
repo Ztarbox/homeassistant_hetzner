@@ -9,8 +9,12 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .api import as_dict
-from .const import CONF_STORAGE_BOX_ID, DOMAIN
-from .coordinator import HetznerConfigEntry, HetznerDataUpdateCoordinator
+from .const import CONF_STORAGE_BOX_ID
+from .coordinator import (
+    HetznerConfigEntry,
+    HetznerDataUpdateCoordinator,
+    storage_box_unique_id,
+)
 from .entity import (
     HetznerEntity,
     HetznerSubaccountEntity,
@@ -121,8 +125,8 @@ class HetznerAccessSettingBinarySensor(HetznerEntity, BinarySensorEntity):
     ) -> None:
         super().__init__(coordinator, storage_box_id)
         self.entity_description = description
-        self._attr_unique_id = (
-            f"{DOMAIN}_storage_box_{self._storage_box_id}_{description.key}"
+        self._attr_unique_id = storage_box_unique_id(
+            self._storage_box_id, description.key
         )
         self._object_id_name = OBJECT_ID_NAMES[str(description.translation_key)]
 

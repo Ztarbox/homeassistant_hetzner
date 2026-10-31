@@ -47,6 +47,14 @@ def storage_box_not_found_issue_id(entry_id: str) -> str:
     return f"storage_box_not_found_{entry_id}"
 
 
+def storage_box_unique_id(storage_box_id: str, *parts: str) -> str:
+    """Return the unique_id of an entity of a storage box.
+
+    Without parts it is the status sensor's; the parts are appended with "_".
+    """
+    return "_".join((f"{DOMAIN}_storage_box_{storage_box_id}", *parts))
+
+
 def subaccount_device_identifier(storage_box_id: str, subaccount_id: str) -> str:
     """Return the device identifier of a subaccount of a storage box."""
     return f"{storage_box_id}_subaccount_{subaccount_id}"

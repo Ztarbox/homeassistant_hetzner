@@ -16,7 +16,7 @@ from custom_components.hetzner.binary_sensor import (
     SUBACCOUNT_ACCESS_SETTINGS,
 )
 from custom_components.hetzner.const import STORAGE_BOX_STATUSES
-from custom_components.hetzner.sensor import OBJECT_ID_NAMES, SIZE_TRANSLATION_KEYS
+from custom_components.hetzner.sensor import OBJECT_ID_NAMES, SIZE_SENSORS
 
 COMPONENT = Path(__file__).parent.parent / "custom_components" / "hetzner"
 LANGUAGES = ["de", "nl"]
@@ -53,7 +53,8 @@ def _code_translation_keys() -> dict[str, dict[str, set[str]]]:
     """Collect literal translation keys of the code by section.
 
     Returns {section: {key: placeholder names passed with it}}; issues are
-    created with async_create_issue, every other call raises an exception.
+    created with async_create_issue, every other call except entity
+    descriptions raises an exception.
     """
     found: dict[str, dict[str, set[str]]] = {"exceptions": {}, "issues": {}}
     for path in COMPONENT.glob("*.py"):
@@ -65,6 +66,9 @@ def _code_translation_keys() -> dict[str, dict[str, set[str]]]:
             if not isinstance(key, ast.Constant):
                 continue
             func = node.func
+            if isinstance(func, ast.Name) and func.id.endswith("EntityDescription"):
+                # Entity names, checked by the entity translation tests
+                continue
             name = func.attr if isinstance(func, ast.Attribute) else ""
             section = "issues" if name == "async_create_issue" else "exceptions"
             placeholders = keywords.get("translation_placeholders")
@@ -82,7 +86,7 @@ def _code_translation_keys() -> dict[str, dict[str, set[str]]]:
 def _entity_translation_keys() -> set[str]:
     """Collect the literal _attr_translation_key values of the sensors."""
     tree = ast.parse((COMPONENT / "sensor.py").read_text(encoding="utf-8"))
-    keys = set(SIZE_TRANSLATION_KEYS.values())
+    keys = {str(description.translation_key) for description in SIZE_SENSORS}
     for node in ast.walk(tree):
         if (
             isinstance(node, ast.Assign)

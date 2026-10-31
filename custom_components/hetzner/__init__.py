@@ -28,6 +28,7 @@ from .coordinator import (
     HetznerDataUpdateCoordinator,
     storage_box_device_info,
     storage_box_not_found_issue_id,
+    storage_box_unique_id,
     subaccount_ids_of_device,
 )
 
@@ -164,7 +165,8 @@ def _size_unique_id(unique_id: str) -> str | None:
     (hetzner_storage_box_<id>_subaccount_<sub_id>_<key>) never match, whatever
     their key ends with.
     """
-    if not unique_id.startswith(f"{DOMAIN}_storage_box_"):
+    # The prefix all unique_ids of a box share, followed by the box id
+    if not unique_id.startswith(storage_box_unique_id("")):
         return None
     parts = unique_id.split("_")
     if len(parts) == 5 and parts[-1] in SIZE_METRICS:
@@ -240,7 +242,7 @@ def _async_remove_access_options_sensor(
     if entity_id := entity_registry.async_get_entity_id(
         SENSOR_DOMAIN,
         DOMAIN,
-        f"{DOMAIN}_storage_box_{storage_box_id}_access_options",
+        storage_box_unique_id(storage_box_id, "access_options"),
     ):
         entity_registry.async_remove(entity_id)
 

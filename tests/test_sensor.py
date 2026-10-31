@@ -48,7 +48,7 @@ from custom_components.hetzner.const import (
 )
 from custom_components.hetzner.coordinator import StorageBoxData
 from custom_components.hetzner.sensor import (
-    SIZE_TRANSLATION_KEYS,
+    SIZE_SENSORS,
     HetznerLocationSensor,
     HetznerSizeSensor,
     HetznerStatusSensor,
@@ -902,17 +902,22 @@ async def test_unload_entry(
     assert state.state == STATE_UNAVAILABLE
 
 
-def test_size_sensor_invalid_metric() -> None:
-    """An unknown metric raises ValueError."""
-    with pytest.raises(ValueError, match="Invalid metric"):
-        HetznerSizeSensor(MagicMock(), STORAGE_BOX_ID, "bogus")
+def _size_sensor(coordinator: MagicMock, metric: str) -> HetznerSizeSensor:
+    """Create the size sensor of one metric."""
+    description = next(d for d in SIZE_SENSORS if d.key == metric)
+    return HetznerSizeSensor(coordinator, STORAGE_BOX_ID, description)
+
+
+def test_size_sensor_descriptions_match_metrics() -> None:
+    """The size sensors are the metrics the migration knows, in that order."""
+    assert tuple(description.key for description in SIZE_SENSORS) == SIZE_METRICS
 
 
 def test_size_sensor_native_bytes() -> None:
     """Size sensors report the API's bytes as integers in bytes."""
     coordinator = MagicMock()
     coordinator.data = StorageBoxData(box={"storage_box_type": {"size": 2**40}})
-    sensor = HetznerSizeSensor(coordinator, STORAGE_BOX_ID, "total")
+    sensor = _size_sensor(coordinator, "total")
     assert sensor.native_value == 2**40
     assert isinstance(sensor.native_value, int)
     assert sensor.native_unit_of_measurement == UnitOfInformation.BYTES
@@ -944,7 +949,7 @@ def test_size_sensor_single_value_missing(missing: str, unknown: set[str]) -> No
         stats[missing] = value
         coordinator.data = StorageBoxData(box=box)
         for metric in SIZE_METRICS:
-            sensor = HetznerSizeSensor(coordinator, STORAGE_BOX_ID, metric)
+            sensor = _size_sensor(coordinator, metric)
             assert sensor.native_value == (
                 None if metric in unknown else expected[metric]
             ), (metric, value)
@@ -960,7 +965,7 @@ def test_size_sensor_total_missing(box_type: Any) -> None:
     )
     expected = {"total": None, "used": 30, "data": 20, "snapshots": 5, "free": None}
     for metric in SIZE_METRICS:
-        sensor = HetznerSizeSensor(coordinator, STORAGE_BOX_ID, metric)
+        sensor = _size_sensor(coordinator, metric)
         assert sensor.native_value == expected[metric], metric
 
 
@@ -969,7 +974,7 @@ def test_size_sensor_invalid_stats() -> None:
     coordinator = MagicMock()
     coordinator.data = StorageBoxData(box={"stats": [1], "storage_box_type": "bx11"})
     for metric in SIZE_METRICS:
-        sensor = HetznerSizeSensor(coordinator, STORAGE_BOX_ID, metric)
+        sensor = _size_sensor(coordinator, metric)
         assert sensor.native_value is None, metric
 
 
@@ -977,7 +982,7 @@ def test_size_sensor_without_coordinator_data() -> None:
     """A coordinator without data reports unknown."""
     coordinator = MagicMock()
     coordinator.data = None
-    sensor = HetznerSizeSensor(coordinator, STORAGE_BOX_ID, "free")
+    sensor = _size_sensor(coordinator, "free")
     assert sensor.native_value is None
     assert sensor.device_info["name"] == f"Storage Box {STORAGE_BOX_ID}"
 
@@ -1073,8 +1078,8 @@ async def test_icons_cover_translation_keys(
     }
     assert icons["location"] == {"default": "mdi:map-marker"}
     assert icons["home_directory"] == {"default": "mdi:folder-home"}
-    for key in SIZE_TRANSLATION_KEYS.values():
-        assert icons[key] == {"default": "mdi:harddisk"}
+    for description in SIZE_SENSORS:
+        assert icons[str(description.translation_key)] == {"default": "mdi:harddisk"}
     # Binary sensors switch their icon with the state
     for key, value in all_icons["binary_sensor"].items():
         assert set(value["state"]) == {"on", "off"}, key

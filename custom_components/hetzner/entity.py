@@ -13,6 +13,7 @@ from .coordinator import (
     HetznerConfigEntry,
     HetznerDataUpdateCoordinator,
     storage_box_device_info,
+    storage_box_unique_id,
     subaccount_device_identifier,
     subaccount_device_name,
 )
@@ -100,8 +101,8 @@ class HetznerSubaccountEntity(HetznerEntity):
     ) -> None:
         super().__init__(coordinator, storage_box_id)
         self._subaccount_id = subaccount_id
-        self._attr_unique_id = (
-            f"{DOMAIN}_storage_box_{storage_box_id}_subaccount_{subaccount_id}_{key}"
+        self._attr_unique_id = storage_box_unique_id(
+            storage_box_id, "subaccount", subaccount_id, key
         )
 
     @property
