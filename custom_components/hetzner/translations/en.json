@@ -2,7 +2,8 @@
   "config": {
     "abort": {
       "already_configured": "This storage box is already configured in Home Assistant.",
-      "reauth_successful": "The API token was updated."
+      "reauth_successful": "The API token was updated.",
+      "reconfigure_successful": "The API token was updated."
     },
     "step": {
       "user": {
@@ -34,12 +35,23 @@
         "data_description": {
           "api_key": "API token from the Hetzner Console (your project → Security → API tokens). Read access is enough."
         }
+      },
+      "reconfigure": {
+        "title": "Change the Hetzner Storage Box API token",
+        "description": "Enter a new API token for storage box {storage_box_id}. It must belong to the project that contains the box. The storage box stays the same; add the integration again to monitor another one.",
+        "data": {
+          "api_key": "API Key"
+        },
+        "data_description": {
+          "api_key": "API token from the Hetzner Console (your project → Security → API tokens). Read access is enough."
+        }
       }
     },
     "error": {
       "api_key_required": "API key is required",
       "no_storage_boxes": "No storage boxes found for this API key",
       "invalid_selection": "Invalid storage box selection",
+      "already_configured": "This storage box is already configured. Select another one.",
       "invalid_api_key": "Invalid API key",
       "connection_timeout": "Connection timeout",
       "api_error": "API error",
@@ -132,7 +144,7 @@
   "issues": {
     "storage_box_not_found": {
       "title": "Storage box {storage_box_id} not found",
-      "description": "The Hetzner API reports storage box {storage_box_id} as not found — deleted, or not accessible with this API token. Home Assistant keeps retrying and removes this message once the box can be read again.\n\nIf the storage box was deleted, delete this integration entry. If it belongs to another project than the API token, delete the entry and add the integration again with an API token of that project."
+      "description": "The Hetzner API reports storage box {storage_box_id} as not found — deleted, or not accessible with this API token. Home Assistant keeps retrying and removes this message once the box can be read again.\n\nIf the storage box was deleted, delete this integration entry. If it belongs to another project than the API token, select Reconfigure in the menu of this integration entry and enter an API token of that project."
     }
   }
 }

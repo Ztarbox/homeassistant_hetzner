@@ -86,7 +86,7 @@ To obtain one, sign in into the [Hetzner Console](https://console.hetzner.com) a
 1. In Home Assistant, navigate to **Settings** > **Devices & Services**
 2. Click **Add Integration** and search for "Hetzner"
 3. Enter your API key when prompted
-4. Select the Storage Box you would like to configure
+4. Select the Storage Box you would like to configure (boxes that are already set up are listed last and marked "already configured", in English in every language; selecting one shows an error)
 5. Complete the configuration flow
 
 To monitor more than one Storage Box, add the integration once per box.
@@ -106,6 +106,8 @@ Two exceptions affect long-term statistics once after the update:
 ### Replacing the API Key
 
 If the Hetzner API rejects the API key, for example because the token was revoked or lacks permissions, Home Assistant shows a **Reauthenticate** notice for the integration. Follow it and enter a new API key of the same project. Temporary errors such as Hetzner maintenance or rate limits do not ask for a new key; see [API Errors and Maintenance](#api-errors-and-maintenance).
+
+To replace the API key at any other time, for example to rotate a token before revoking the old one, open the three-dot menu of the Storage Box under **Settings** > **Devices & Services** > **Hetzner Storage Box** and select **Reconfigure**. The new key must have access to the same Storage Box; entities, history and settings stay as they are. To monitor another box, add the integration again.
 
 
 ## Sensors and Attributes
@@ -197,7 +199,7 @@ All sensors are automatically updated every 10 minutes to fetch the latest statu
 If the Hetzner API answers that the Storage Box was not found, the box was deleted, or it is not accessible with the configured API token (for example a token of another project). The Hetzner API does not tell these cases apart, so the integration keeps retrying, marks the sensors as unavailable and shows a repair issue under **Settings** > **System** > **Repairs**. The issue disappears as soon as the box can be read again, or when the integration entry is unloaded, deleted or asks for a new API key.
 
 - If the box was deleted, delete the integration entry.
-- If the box belongs to another project than the API token, delete the entry and add the integration again with an API token of that project.
+- If the box belongs to another project than the API token, select **Reconfigure** in the three-dot menu of the entry and enter an API token of that project (see [Replacing the API Key](#replacing-the-api-key)).
 
 ### API Errors and Maintenance
 

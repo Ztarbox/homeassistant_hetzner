@@ -12,6 +12,7 @@ from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.const import CONF_API_KEY, CONF_HOST
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers import selector
 import pytest
 from pytest_homeassistant_custom_component.common import (  # type: ignore[import-untyped]
     MockConfigEntry,
@@ -23,12 +24,13 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import (  # type: i
 from yarl import URL
 
 from custom_components.hetzner.api import LIST_PAGE_SIZE
-from custom_components.hetzner.config_flow import HetznerConfigFlow
+from custom_components.hetzner.config_flow import HetznerConfigFlow, StorageBoxInfo
 from custom_components.hetzner.const import CONF_STORAGE_BOX_ID, DEFAULT_HOST, DOMAIN
 
 from tests.conftest import API_KEY, BOX_URL, LIST_URL, STORAGE_BOX_ID, SUBACCOUNTS_URL
 
-BOX_DESCRIPTION = f"backup (ID: {STORAGE_BOX_ID}, Status: active, Type: bx11, BX11)"
+# The type name "bx11" repeats its description "BX11", so it is left out
+BOX_DESCRIPTION = f"backup (ID: {STORAGE_BOX_ID}, Status: active, Type: BX11)"
 BOX_OPTION = {"value": STORAGE_BOX_ID, "label": BOX_DESCRIPTION}
 
 
@@ -96,6 +98,22 @@ async def _finish_after_error(
     assert result["result"].unique_id == STORAGE_BOX_ID
 
 
+# Flows that replace the API key of an entry: step id and abort reason
+KEY_FLOWS = {
+    "reauth": ("reauth_confirm", "reauth_successful"),
+    "reconfigure": ("reconfigure", "reconfigure_successful"),
+}
+
+
+async def _start_key_flow(
+    hass: HomeAssistant, entry: MockConfigEntry, flow: str
+) -> ConfigFlowResult:
+    """Start a reauth or reconfigure flow of the entry."""
+    if flow == "reauth":
+        return await entry.start_reauth_flow(hass)
+    return await entry.start_reconfigure_flow(hass)
+
+
 def _schema(result: ConfigFlowResult) -> dict[Any, Any]:
     """Return the schema dict of a form result."""
     data_schema = result["data_schema"]
@@ -112,6 +130,14 @@ async def test_user_step_shows_form(hass: HomeAssistant) -> None:
     assert result["errors"] == {}
     # Only the API key: the size sensors' unit is set per entity
     assert list(_schema(result)) == [CONF_API_KEY]
+    _assert_masked_api_key(result)
+
+
+def _assert_masked_api_key(result: ConfigFlowResult) -> None:
+    """Assert the form asks for the API key in a password field."""
+    key_selector = _schema(result)[CONF_API_KEY]
+    assert isinstance(key_selector, selector.TextSelector)
+    assert key_selector.config["type"] == selector.TextSelectorType.PASSWORD
 
 
 @pytest.mark.parametrize("api_key", ["", "   "])
@@ -175,7 +201,7 @@ async def test_full_flow_creates_entry(
 ) -> None:
     """Test a valid key and box selection create a config entry."""
     payload = _list_payload(storage_box)
-    _queue_list_responses(aioclient_mock, payload, payload, payload)
+    _queue_list_responses(aioclient_mock, payload, payload)
 
     result = await _start_flow(hass)
     result = await _submit_key(hass, result["flow_id"], api_key=f"  {API_KEY} ")
@@ -183,8 +209,10 @@ async def test_full_flow_creates_entry(
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "storage_box"
     assert result["errors"] == {}
-    selector = _schema(result)[CONF_STORAGE_BOX_ID]
-    assert selector.config["options"] == [BOX_OPTION]
+    box_selector = _schema(result)[CONF_STORAGE_BOX_ID]
+    assert box_selector.config["options"] == [BOX_OPTION]
+    # The list that validated the key is shown, not requested again
+    assert aioclient_mock.call_count == 1
     _, _, _, headers = aioclient_mock.mock_calls[0]
     assert headers == {"Authorization": f"Bearer {API_KEY}"}
 
@@ -215,14 +243,13 @@ async def test_storage_box_step_lists_multiple_boxes(
     """Test every box is offered and missing fields are left out of the label."""
     other = {"id": 42, "name": "other", "status": "initializing"}
     unnamed = {"id": 43, "name": None, "storage_box_type": {"name": "bx21"}}
-    payload = _list_payload(storage_box, other, unnamed)
-    _queue_list_responses(aioclient_mock, payload, payload)
+    _queue_list_responses(aioclient_mock, _list_payload(storage_box, other, unnamed))
 
     result = await _start_flow(hass)
     result = await _submit_key(hass, result["flow_id"])
 
-    selector = _schema(result)[CONF_STORAGE_BOX_ID]
-    assert selector.config["options"] == [
+    box_selector = _schema(result)[CONF_STORAGE_BOX_ID]
+    assert box_selector.config["options"] == [
         BOX_OPTION,
         {"value": "42", "label": "other (ID: 42, Status: initializing)"},
         {"value": "43", "label": "ID: 43, Type: bx21"},
@@ -262,10 +289,7 @@ async def test_storage_box_step_box_changed_before_submit(
     """Test a box whose status changes before submitting can still be selected."""
     changed = {**storage_box, "status": "locked"}
     _queue_list_responses(
-        aioclient_mock,
-        _list_payload(storage_box),
-        _list_payload(storage_box),
-        _list_payload(changed),
+        aioclient_mock, _list_payload(storage_box), _list_payload(changed)
     )
 
     result = await _start_flow(hass)
@@ -336,12 +360,20 @@ async def test_storage_box_step_list_errors(
     result = await _start_flow(hass)
     result = await _submit_key(hass, result["flow_id"])
 
+    # A key without boxes is valid; the box step says there are none
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "storage_box"
+    assert result["errors"] == {"base": "no_storage_boxes"}
+    assert _schema(result) == {}
+
+    # Submitting the empty form fetches the boxes again
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "storage_box"
     assert result["errors"] == {"base": error}
     assert _schema(result) == {}
 
-    # Submitting the empty form fetches the boxes again
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
 
     assert result["type"] is FlowResultType.FORM
@@ -370,9 +402,10 @@ async def test_storage_box_step_invalid_selection(
     box that disappears between showing and submitting the form.
     """
     other = {"id": 42, "name": "other", "status": "active"}
-    both = _list_payload(storage_box, other)
     only_box = _list_payload(storage_box)
-    _queue_list_responses(aioclient_mock, both, both, only_box, only_box)
+    _queue_list_responses(
+        aioclient_mock, _list_payload(storage_box, other), only_box, only_box
+    )
 
     result = await _start_flow(hass)
     result = await _submit_key(hass, result["flow_id"])
@@ -383,8 +416,8 @@ async def test_storage_box_step_invalid_selection(
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "storage_box"
     assert result["errors"] == {"base": "invalid_selection"}
-    selector = _schema(result)[CONF_STORAGE_BOX_ID]
-    assert selector.config["options"] == [BOX_OPTION]
+    box_selector = _schema(result)[CONF_STORAGE_BOX_ID]
+    assert box_selector.config["options"] == [BOX_OPTION]
 
     with patch("custom_components.hetzner.async_setup_entry", return_value=True):
         result = await hass.config_entries.flow.async_configure(
@@ -402,31 +435,116 @@ async def test_storage_box_step_already_configured(
     config_entry: MockConfigEntry,
     storage_box: dict[str, Any],
 ) -> None:
-    """Test selecting an already configured box aborts the flow."""
-    aioclient_mock.get(LIST_URL, **_list_payload(storage_box))
+    """Test a configured box is marked and selecting it shows an error."""
+    other = {"id": 42, "name": "other", "status": "active"}
+    aioclient_mock.get(LIST_URL, **_list_payload(storage_box, other))
+    # Listed first by the API, offered last: the dropdown preselects the first
+    options = [
+        {"value": "42", "label": "other (ID: 42, Status: active)"},
+        {
+            "value": STORAGE_BOX_ID,
+            "label": f"{BOX_DESCRIPTION[:-1]}, already configured)",
+        },
+    ]
 
     result = await _start_flow(hass)
     result = await _submit_key(hass, result["flow_id"])
+    assert _schema(result)[CONF_STORAGE_BOX_ID].config["options"] == options
+
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {CONF_STORAGE_BOX_ID: STORAGE_BOX_ID}
     )
 
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "already_configured"
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "storage_box"
+    assert result["errors"] == {"base": "already_configured"}
+    assert _schema(result)[CONF_STORAGE_BOX_ID].config["options"] == options
     assert len(hass.config_entries.async_entries(DOMAIN)) == 1
 
+    # Another box of the same key can still be added
+    with patch("custom_components.hetzner.async_setup_entry", return_value=True):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_STORAGE_BOX_ID: "42"}
+        )
+        await hass.async_block_till_done()
 
-async def test_reauth_flow_updates_api_key(
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["result"].unique_id == "42"
+    assert len(hass.config_entries.async_entries(DOMAIN)) == 2
+
+
+async def test_storage_box_already_configured_in_two_flows(
     hass: HomeAssistant,
     aioclient_mock: AiohttpClientMocker,
     config_entry: MockConfigEntry,
+    storage_box: dict[str, Any],
+) -> None:
+    """Test a second flow picking a configured box gets the same form error.
+
+    The first flow must not keep the box as its unique_id, or the second
+    would abort as already in progress.
+    """
+    aioclient_mock.get(LIST_URL, **_list_payload(storage_box))
+    flows = []
+    for _ in range(2):
+        result = await _start_flow(hass)
+        flows.append((await _submit_key(hass, result["flow_id"]))["flow_id"])
+
+    for flow_id in flows:
+        result = await hass.config_entries.flow.async_configure(
+            flow_id, {CONF_STORAGE_BOX_ID: STORAGE_BOX_ID}
+        )
+        assert result["type"] is FlowResultType.FORM
+        assert result["errors"] == {"base": "already_configured"}
+
+
+async def test_storage_box_ignored_entry_not_marked(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    storage_box: dict[str, Any],
+) -> None:
+    """Test a box with an ignored entry is offered unmarked and can be added."""
+    MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=STORAGE_BOX_ID,
+        source=config_entries.SOURCE_IGNORE,
+    ).add_to_hass(hass)
+    aioclient_mock.get(LIST_URL, **_list_payload(storage_box))
+
+    result = await _start_flow(hass)
+    result = await _submit_key(hass, result["flow_id"])
+    assert _schema(result)[CONF_STORAGE_BOX_ID].config["options"] == [BOX_OPTION]
+
+    with patch("custom_components.hetzner.async_setup_entry", return_value=True):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_STORAGE_BOX_ID: STORAGE_BOX_ID}
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["result"].unique_id == STORAGE_BOX_ID
+
+
+@pytest.mark.parametrize("flow", KEY_FLOWS)
+async def test_key_flow_updates_api_key(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    flow: str,
 ) -> None:
     """Test a valid new key is stored and the not loaded entry reloaded."""
+    step_id, reason = KEY_FLOWS[flow]
     aioclient_mock.get(BOX_URL, json={"storage_box": {}})
 
-    result = await config_entry.start_reauth_flow(hass)
+    result = await _start_key_flow(hass, config_entry, flow)
     assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "reauth_confirm"
+    assert result["step_id"] == step_id
+    assert result["errors"] == {}
+    assert list(_schema(result)) == [CONF_API_KEY]
+    _assert_masked_api_key(result)
+    placeholders = result["description_placeholders"]
+    assert placeholders is not None
+    assert placeholders[CONF_STORAGE_BOX_ID] == STORAGE_BOX_ID
 
     with patch(
         "custom_components.hetzner.async_setup_entry", return_value=True
@@ -437,7 +555,7 @@ async def test_reauth_flow_updates_api_key(
         await hass.async_block_till_done()
 
     assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "reauth_successful"
+    assert result["reason"] == reason
     assert config_entry.data[CONF_API_KEY] == "new-key"
     assert config_entry.data[CONF_STORAGE_BOX_ID] == STORAGE_BOX_ID
     assert config_entry.options == {}
@@ -446,6 +564,38 @@ async def test_reauth_flow_updates_api_key(
     _, url, _, headers = aioclient_mock.mock_calls[0]
     assert str(url) == BOX_URL
     assert headers == {"Authorization": "Bearer new-key"}
+
+
+async def test_reconfigure_loaded_entry_reloads_with_new_key(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    storage_box: dict[str, Any],
+) -> None:
+    """Test reconfiguring a running entry reloads it with the new key."""
+    aioclient_mock.get(BOX_URL, json={"storage_box": storage_box})
+    aioclient_mock.get(SUBACCOUNTS_URL, json={"subaccounts": []})
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+    coordinator = config_entry.runtime_data
+
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(BOX_URL, json={"storage_box": storage_box})
+    aioclient_mock.get(SUBACCOUNTS_URL, json={"subaccounts": []})
+    result = await config_entry.start_reconfigure_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_API_KEY: "new-key"}
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert config_entry.state is config_entries.ConfigEntryState.LOADED
+    assert config_entry.runtime_data is not coordinator
+    # Key check plus the first refresh after the reload, all with the new key
+    assert aioclient_mock.call_count == 3
+    for _, _, _, headers in aioclient_mock.mock_calls:
+        assert headers == {"Authorization": "Bearer new-key"}
 
 
 async def test_reauth_flow_loaded_entry_reloads_with_new_key(
@@ -543,25 +693,28 @@ async def test_no_options_flow(
         ("new-key", {"exc": aiohttp.ClientError("boom")}, "validation_error"),
     ],
 )
-async def test_reauth_flow_errors_recover(
+@pytest.mark.parametrize("flow", KEY_FLOWS)
+async def test_key_flow_errors_recover(
     hass: HomeAssistant,
     aioclient_mock: AiohttpClientMocker,
     config_entry: MockConfigEntry,
     api_key: str,
     response: dict[str, Any] | None,
     error: str,
+    flow: str,
 ) -> None:
     """Test a rejected key shows an error and a valid key then finishes."""
+    step_id, reason = KEY_FLOWS[flow]
     if response is not None:
         aioclient_mock.get(BOX_URL, **response)
 
-    result = await config_entry.start_reauth_flow(hass)
+    result = await _start_key_flow(hass, config_entry, flow)
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {CONF_API_KEY: api_key}
     )
 
     assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "reauth_confirm"
+    assert result["step_id"] == step_id
     assert result["errors"] == {CONF_API_KEY: error}
     assert config_entry.data[CONF_API_KEY] == API_KEY
 
@@ -574,5 +727,29 @@ async def test_reauth_flow_errors_recover(
         await hass.async_block_till_done()
 
     assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "reauth_successful"
+    assert result["reason"] == reason
     assert config_entry.data[CONF_API_KEY] == "new-key"
+
+
+@pytest.mark.parametrize(
+    ("box_type", "description", "type_label"),
+    [
+        ("bx11", "BX11", "BX11"),
+        ("bx11", "BX11 (legacy)", "bx11, BX11 (legacy)"),
+        ("bx11", None, "bx11"),
+        (None, "BX11", "BX11"),
+    ],
+)
+def test_box_label_type(
+    box_type: str | None, description: str | None, type_label: str
+) -> None:
+    """The type name is only left out when it repeats the description."""
+    box_info: StorageBoxInfo = {
+        "name": None,
+        "status": None,
+        "box_type": box_type,
+        "description": description,
+    }
+    assert HetznerConfigFlow._box_label("1", box_info, False) == (
+        f"ID: 1, Type: {type_label}"
+    )

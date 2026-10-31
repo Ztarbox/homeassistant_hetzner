@@ -268,3 +268,28 @@ def test_readonly_icons() -> None:
         "off": "mdi:lock-open-variant",
     }
     assert icons["sensor"]["home_directory"] == {"default": "mdi:folder-home"}
+
+
+def test_config_flow_steps_and_aborts_translated() -> None:
+    """Every form step and every abort reason of the flow has texts."""
+    tree = ast.parse((COMPONENT / "config_flow.py").read_text(encoding="utf-8"))
+    steps = {
+        node.name.removeprefix("async_step_")
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef)
+        and node.name.startswith("async_step_")
+    }
+    # reauth only forwards to reauth_confirm and shows no form
+    steps.discard("reauth")
+    assert steps == {"user", "storage_box", "reauth_confirm", "reconfigure"}
+    for step in steps:
+        texts = EN["config"]["step"][step]
+        assert texts["title"], step
+        assert texts["description"], step
+    # async_update_reload_and_abort picks the reason by the flow's source;
+    # _abort_if_unique_id_configured guards against a race
+    assert set(EN["config"]["abort"]) == {
+        "already_configured",
+        "reauth_successful",
+        "reconfigure_successful",
+    }
