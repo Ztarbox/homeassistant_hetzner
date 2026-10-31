@@ -41,9 +41,20 @@ from custom_components.hetzner.binary_sensor import (
     ACCESS_SETTINGS,
     HetznerAccessSettingBinarySensor,
 )
-from custom_components.hetzner.const import CONF_STORAGE_BOX_ID, DEFAULT_HOST, DOMAIN
+from custom_components.hetzner.const import (
+    CONF_STORAGE_BOX_ID,
+    DEFAULT_HOST,
+    DOMAIN,
+    SIZE_METRICS,
+)
 from custom_components.hetzner.coordinator import StorageBoxData
-from custom_components.hetzner.sensor import SIZE_TRANSLATION_KEYS, HetznerSizeSensor
+from custom_components.hetzner.sensor import (
+    SIZE_TRANSLATION_KEYS,
+    HetznerLocationSensor,
+    HetznerSizeSensor,
+    HetznerStatusSensor,
+    HetznerSubaccountHomeDirectorySensor,
+)
 
 from tests.conftest import API_KEY, BOX_URL, STORAGE_BOX_ID, SUBACCOUNTS_URL
 
@@ -387,7 +398,7 @@ async def test_free_space_clamped(
     storage_box: dict[str, Any],
 ) -> None:
     """Free space never goes negative."""
-    storage_box["stats"]["size_data"] = 2_000_000_000_000
+    storage_box["stats"]["size"] = 2_000_000_000_000
     _mock_box(aioclient_mock, storage_box)
     await _setup(hass, config_entry)
 
@@ -402,7 +413,7 @@ async def test_missing_stats_and_type(
     config_entry: MockConfigEntry,
     storage_box: dict[str, Any],
 ) -> None:
-    """Missing stats and storage box type report zero sizes."""
+    """Missing stats and storage box type report unknown sizes, not zero."""
     del storage_box["stats"]
     storage_box["storage_box_type"] = None
     _mock_box(aioclient_mock, storage_box)
@@ -411,7 +422,7 @@ async def test_missing_stats_and_type(
     for suffix in SIZE_ENTITIES.values():
         state = hass.states.get(f"{PREFIX}_{suffix}")
         assert state is not None
-        assert float(state.state) == 0, suffix
+        assert state.state == STATE_UNKNOWN, suffix
 
     state = hass.states.get(PREFIX)
     assert state is not None
@@ -461,7 +472,7 @@ async def test_empty_storage_box(
     for suffix in SIZE_ENTITIES.values():
         state = hass.states.get(f"{prefix}_{suffix}")
         assert state is not None
-        assert float(state.state) == 0, suffix
+        assert state.state == STATE_UNKNOWN, suffix
 
 
 async def test_missing_storage_box_key(
@@ -892,12 +903,64 @@ def test_size_sensor_native_bytes() -> None:
     assert sensor.unique_id == f"{UID}_total"
 
 
+@pytest.mark.parametrize(
+    ("missing", "unknown"),
+    [
+        # Free space needs the total size and the total disk usage
+        ("size", {"used", "free"}),
+        ("size_data", {"data"}),
+        ("size_snapshots", {"snapshots"}),
+    ],
+)
+def test_size_sensor_single_value_missing(missing: str, unknown: set[str]) -> None:
+    """Only the sensors that need a missing or non-int value are unknown.
+
+    Free space is the total minus the total disk usage, even where that is
+    more than data and snapshots together, so used and free add up.
+    """
+    stats: dict[str, Any] = {"size": 30, "size_data": 20, "size_snapshots": 5}
+    box = {"storage_box_type": {"size": 100}, "stats": stats}
+    expected = {"total": 100, "used": 30, "data": 20, "snapshots": 5, "free": 70}
+    coordinator = MagicMock()
+    for value in (None, "20", 1.5, True):
+        stats[missing] = value
+        coordinator.data = StorageBoxData(box=box)
+        for metric in SIZE_METRICS:
+            sensor = HetznerSizeSensor(coordinator, STORAGE_BOX_ID, metric)
+            assert sensor.native_value == (
+                None if metric in unknown else expected[metric]
+            ), (metric, value)
+
+
+@pytest.mark.parametrize("box_type", [{}, {"size": "100"}, None])
+def test_size_sensor_total_missing(box_type: Any) -> None:
+    """Without the total size, total and free space are unknown."""
+    stats = {"size": 30, "size_data": 20, "size_snapshots": 5}
+    coordinator = MagicMock()
+    coordinator.data = StorageBoxData(
+        box={"storage_box_type": box_type, "stats": stats}
+    )
+    expected = {"total": None, "used": 30, "data": 20, "snapshots": 5, "free": None}
+    for metric in SIZE_METRICS:
+        sensor = HetznerSizeSensor(coordinator, STORAGE_BOX_ID, metric)
+        assert sensor.native_value == expected[metric], metric
+
+
+def test_size_sensor_invalid_stats() -> None:
+    """Stats or a type that are no objects make every size unknown."""
+    coordinator = MagicMock()
+    coordinator.data = StorageBoxData(box={"stats": [1], "storage_box_type": "bx11"})
+    for metric in SIZE_METRICS:
+        sensor = HetznerSizeSensor(coordinator, STORAGE_BOX_ID, metric)
+        assert sensor.native_value is None, metric
+
+
 def test_size_sensor_without_coordinator_data() -> None:
-    """A coordinator without data reports zero."""
+    """A coordinator without data reports unknown."""
     coordinator = MagicMock()
     coordinator.data = None
     sensor = HetznerSizeSensor(coordinator, STORAGE_BOX_ID, "free")
-    assert sensor.native_value == 0
+    assert sensor.native_value is None
     assert sensor.device_info["name"] == f"Storage Box {STORAGE_BOX_ID}"
 
 
@@ -1047,3 +1110,19 @@ async def test_status_sensor_unknown_status(
     _mock_box(aioclient_mock, storage_box)
     await _tick(hass)
     assert hass.states.get(PREFIX).state == "active"  # type: ignore[union-attr]
+
+
+def test_unrecorded_attributes_exist() -> None:
+    """The attributes left out of the recorder are ones the sensors report."""
+    coordinator = MagicMock()
+    coordinator.data = StorageBoxData(box={}, subaccounts={"42": {}})
+    sensors = [
+        HetznerStatusSensor(coordinator, STORAGE_BOX_ID),
+        HetznerLocationSensor(coordinator, STORAGE_BOX_ID),
+        HetznerSubaccountHomeDirectorySensor(coordinator, STORAGE_BOX_ID, "42"),
+    ]
+    for sensor in sensors:
+        # All of them are fixed details, see the sensor classes
+        assert sensor.extra_state_attributes is not None
+        attributes = set(sensor.extra_state_attributes)
+        assert sensor._unrecorded_attributes == attributes, type(sensor).__name__

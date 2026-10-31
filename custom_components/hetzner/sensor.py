@@ -88,6 +88,17 @@ async def async_setup_entry(
     )
 
 
+def _bytes(values: Any, key: str) -> int | None:
+    """Return one size in bytes, None if the API leaves it out or sends no int."""
+    if not isinstance(values, dict):
+        return None
+    value = values.get(key)
+    # bool is an int subclass but never a size
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
 class HetznerStatusSensor(HetznerEntity, SensorEntity):
     """Sensor representing the storage box status and details."""
 
@@ -95,6 +106,11 @@ class HetznerStatusSensor(HetznerEntity, SensorEntity):
     _attr_options = STORAGE_BOX_STATUSES
     # Translates the states and picks the icon; the name stays the device's
     _attr_translation_key = "status"
+    # Details of the box that rarely change (name, type on an up- or
+    # downgrade): not worth storing with every state change
+    _unrecorded_attributes = frozenset(
+        {"id", "name", "username", "server", "system", "storage_box_type", "created"}
+    )
 
     def __init__(
         self, coordinator: HetznerDataUpdateCoordinator, storage_box_id: str
@@ -140,6 +156,10 @@ class HetznerLocationSensor(HetznerEntity, SensorEntity):
 
     _attr_translation_key = "location"
     _object_id_name = OBJECT_ID_NAMES["location"]
+    # Details of the location, which only change along with the state
+    _unrecorded_attributes = frozenset(
+        {"id", "country", "city", "latitude", "longitude", "description"}
+    )
 
     def __init__(
         self, coordinator: HetznerDataUpdateCoordinator, storage_box_id: str
@@ -199,26 +219,30 @@ class HetznerSizeSensor(HetznerEntity, SensorEntity):
         )
 
     @property
-    def native_value(self) -> int:
+    def native_value(self) -> int | None:
         data = self._box
         stats = data.get("stats") or {}
         sb = data.get("storage_box_type") or {}
 
-        total: int = sb.get("size") or 0
-        used: int = stats.get("size") or 0
-        data_size: int = stats.get("size_data") or 0
-        snapshots: int = stats.get("size_snapshots") or 0
+        # Unknown rather than 0 when the API leaves a value out: a 0 would end
+        # up in the long-term statistics as a real measurement
+        total = _bytes(sb, "size")
+        used = _bytes(stats, "size")
 
         if self._metric == "total":
             return total
         if self._metric == "used":
             return used
         if self._metric == "data":
-            return data_size
+            return _bytes(stats, "size_data")
         if self._metric == "snapshots":
-            return snapshots
-        # Free space, clamped to 0 to avoid negative values
-        return max(0, total - data_size - snapshots)
+            return _bytes(stats, "size_snapshots")
+        if total is None or used is None:
+            return None
+        # Free space: the total disk usage (data and snapshots, as the API
+        # counts it) subtracted, so used and free add up to the total.
+        # Clamped to 0 to avoid negative values
+        return max(0, total - used)
 
 
 class HetznerSubaccountHomeDirectorySensor(HetznerSubaccountEntity, SensorEntity):
@@ -227,6 +251,8 @@ class HetznerSubaccountHomeDirectorySensor(HetznerSubaccountEntity, SensorEntity
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_translation_key = "home_directory"
     _object_id_name = OBJECT_ID_NAMES["home_directory"]
+    # Rarely changed details of the subaccount, not worth keeping in history
+    _unrecorded_attributes = frozenset({"username", "server", "description"})
 
     def __init__(
         self,

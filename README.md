@@ -153,6 +153,10 @@ The integration provides the following sensors. Their names follow the Home Assi
 - **State**: The available free space in your Storage Box
 - **Unit**: GiB by default, changeable per sensor (see [Changing the Unit](#changing-the-unit))
 
+Free space is the total size minus the total used size, so the two add up to the total size. A size the API does not report shows as unknown rather than 0, so it does not end up in the long-term statistics; free space is unknown when the total size or the total used size is missing.
+
+The attributes of the status, location and home directory sensors are details that rarely change. Home Assistant shows their current values but does not store them in the history.
+
 ## Binary Sensors
 
 One binary sensor per access setting of the Storage Box shows whether it is enabled (`on`) or disabled (`off`). These are the settings of the Storage Box's main account, so their names end with "(main account)" (the entity IDs leave this out). The access settings of subaccounts are covered by their own devices, see [Subaccounts](#subaccounts). The binary sensors are diagnostic entities, so they appear under **Diagnostic** on the device page. A setting the API does not report shows as unknown.
