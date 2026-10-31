@@ -14,6 +14,7 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
+from .api import as_dict
 from .const import (
     CONF_STORAGE_BOX_ID,
     DOMAIN,
@@ -61,7 +62,6 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up sensors for Hetzner Storage Box using the entry's coordinator."""
-    # Presence checked in __init__.async_setup_entry
     storage_box_id = config_entry.data[CONF_STORAGE_BOX_ID]
     # Already refreshed in __init__.async_setup_entry
     coordinator = config_entry.runtime_data
@@ -88,10 +88,8 @@ async def async_setup_entry(
     )
 
 
-def _bytes(values: Any, key: str) -> int | None:
+def _bytes(values: dict[str, Any], key: str) -> int | None:
     """Return one size in bytes, None if the API leaves it out or sends no int."""
-    if not isinstance(values, dict):
-        return None
     value = values.get(key)
     # bool is an int subclass but never a size
     if isinstance(value, bool) or not isinstance(value, int):
@@ -103,7 +101,7 @@ class HetznerStatusSensor(HetznerEntity, SensorEntity):
     """Sensor representing the storage box status and details."""
 
     _attr_device_class = SensorDeviceClass.ENUM
-    _attr_options = STORAGE_BOX_STATUSES
+    _attr_options = list(STORAGE_BOX_STATUSES)
     # Translates the states and picks the icon; the name stays the device's
     _attr_translation_key = "status"
     # Details of the box that rarely change (name, type on an up- or
@@ -139,7 +137,7 @@ class HetznerStatusSensor(HetznerEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         data = self._box
-        s_type = data.get("storage_box_type") or {}
+        s_type = as_dict(data.get("storage_box_type"))
         return {
             "id": data.get("id"),
             "name": data.get("name"),
@@ -169,14 +167,11 @@ class HetznerLocationSensor(HetznerEntity, SensorEntity):
 
     @property
     def native_value(self) -> str | None:
-        data = self._box
-        location = data.get("location") or {}
-        return location.get("name")
+        return as_dict(self._box.get("location")).get("name")
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        data = self._box
-        location = data.get("location") or {}
+        location = as_dict(self._box.get("location"))
         return {
             "id": location.get("id"),
             "country": location.get("country"),
@@ -221,8 +216,8 @@ class HetznerSizeSensor(HetznerEntity, SensorEntity):
     @property
     def native_value(self) -> int | None:
         data = self._box
-        stats = data.get("stats") or {}
-        sb = data.get("storage_box_type") or {}
+        stats = as_dict(data.get("stats"))
+        sb = as_dict(data.get("storage_box_type"))
 
         # Unknown rather than 0 when the API leaves a value out: a 0 would end
         # up in the long-term statistics as a real measurement

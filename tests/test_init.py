@@ -452,26 +452,6 @@ async def test_migrate_removes_only_own_access_options_sensor(
     assert hass.states.get(access_options.entity_id) is None
 
 
-async def test_migrate_entry_without_storage_box_id(
-    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
-) -> None:
-    """An entry without a box id is migrated and then fails setup as before."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        version=3,
-        data={CONF_API_KEY: API_KEY, LEGACY_CONF_UNIT: "GB"},
-    )
-    entry.add_to_hass(hass)
-
-    assert not await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-
-    assert entry.version == 5
-    assert entry.data == {CONF_API_KEY: API_KEY}
-    assert entry.state is ConfigEntryState.SETUP_ERROR
-    assert aioclient_mock.call_count == 0
-
-
 async def test_migrate_current_entry_is_noop(
     hass: HomeAssistant, config_entry: MockConfigEntry
 ) -> None:
@@ -495,7 +475,7 @@ async def test_safe_update_unique_id_same_id_noop(
     reg = _register(hass, f"{PREFIX}_total", config_entry)
 
     with patch.object(registry, "async_update_entity") as update:
-        await _safe_update_unique_id(hass, registry, reg, f"{PREFIX}_total")
+        _safe_update_unique_id(registry, reg, f"{PREFIX}_total")
 
     update.assert_not_called()
 
@@ -510,7 +490,7 @@ async def test_safe_update_unique_id_value_error_logged(
     reg = _register(hass, f"{PREFIX}_total_gb", config_entry)
 
     with patch.object(registry, "async_update_entity", side_effect=ValueError("boom")):
-        await _safe_update_unique_id(hass, registry, reg, f"{PREFIX}_total")
+        _safe_update_unique_id(registry, reg, f"{PREFIX}_total")
 
     assert "Could not update unique_id" in caplog.text
     assert "boom" in caplog.text

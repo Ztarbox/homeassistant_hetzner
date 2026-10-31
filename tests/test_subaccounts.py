@@ -760,20 +760,6 @@ async def test_remove_config_entry_device(
     assert not await async_remove_config_entry_device(hass, config_entry, box)
 
 
-async def test_remove_config_entry_device_without_box_id(
-    hass: HomeAssistant,
-) -> None:
-    """An entry without a box id has no subaccount devices to delete."""
-    entry = MockConfigEntry(domain=DOMAIN, version=5, data={CONF_API_KEY: "key"})
-    entry.add_to_hass(hass)
-    device = dr.async_get(hass).async_get_or_create(
-        config_entry_id=entry.entry_id,
-        identifiers={(DOMAIN, "None_subaccount_7")},
-    )
-
-    assert not await async_remove_config_entry_device(hass, entry, device)
-
-
 async def test_remove_device_through_websocket(
     hass: HomeAssistant,
     hass_ws_client: Any,

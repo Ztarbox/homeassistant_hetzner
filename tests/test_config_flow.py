@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 from unittest.mock import patch
 
@@ -23,8 +24,12 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import (  # type: i
 )
 from yarl import URL
 
-from custom_components.hetzner.api import LIST_PAGE_SIZE
-from custom_components.hetzner.config_flow import HetznerConfigFlow, StorageBoxInfo
+from custom_components.hetzner.api import LIST_PAGE_SIZE, HetznerError
+from custom_components.hetzner.config_flow import (
+    HetznerConfigFlow,
+    StorageBoxInfo,
+    _error_key,
+)
 from custom_components.hetzner.const import CONF_STORAGE_BOX_ID, DEFAULT_HOST, DOMAIN
 
 from tests.conftest import API_KEY, BOX_URL, LIST_URL, STORAGE_BOX_ID, SUBACCOUNTS_URL
@@ -254,6 +259,68 @@ async def test_storage_box_step_lists_multiple_boxes(
         {"value": "42", "label": "other (ID: 42, Status: initializing)"},
         {"value": "43", "label": "ID: 43, Type: bx21"},
     ]
+
+
+async def test_storage_box_step_skips_malformed_boxes(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    storage_box: dict[str, Any],
+) -> None:
+    """Boxes without id are left out, a malformed type is left out of the label."""
+    no_id = {"name": "no id", "status": "active"}
+    bad_type = {"id": 42, "name": "other", "storage_box_type": "bx11"}
+    _queue_list_responses(
+        aioclient_mock,
+        {"json": {"storage_boxes": [no_id, "box", storage_box, None, bad_type]}},
+    )
+
+    result = await _start_flow(hass)
+    result = await _submit_key(hass, result["flow_id"])
+
+    box_selector = _schema(result)[CONF_STORAGE_BOX_ID]
+    assert box_selector.config["options"] == [
+        BOX_OPTION,
+        {"value": "42", "label": "other (ID: 42)"},
+    ]
+
+
+async def test_storage_box_step_only_boxes_without_id(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """A list of boxes without id has nothing to select."""
+    _queue_list_responses(aioclient_mock, _list_payload({"name": "no id"}))
+
+    result = await _start_flow(hass)
+    result = await _submit_key(hass, result["flow_id"])
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "storage_box"
+    assert result["errors"] == {"base": "no_storage_boxes"}
+
+
+async def test_unexpected_error_logged_with_traceback(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Errors outside the API client are bugs: logged with their traceback."""
+    aioclient_mock.get(LIST_URL, exc=ValueError("boom"))
+
+    result = await _start_flow(hass)
+    result = await _submit_key(hass, result["flow_id"])
+
+    assert result["errors"] == {CONF_API_KEY: "unknown"}
+    assert "Unexpected error listing the storage boxes" in caplog.text
+    assert "Traceback" in caplog.text
+
+
+def test_error_key_unknown_client_error(caplog: pytest.LogCaptureFixture) -> None:
+    """An error class the client may add later is an API error, not a bug."""
+    with caplog.at_level(logging.DEBUG):
+        assert _error_key(HetznerError("new")) == "api_error"
+
+    assert "Traceback" not in caplog.text
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
 
 async def test_storage_box_step_lists_all_pages(
@@ -691,6 +758,7 @@ async def test_no_options_flow(
         ("new-key", {"status": 500}, "api_error"),
         ("new-key", {"exc": asyncio.TimeoutError()}, "connection_timeout"),
         ("new-key", {"exc": aiohttp.ClientError("boom")}, "cannot_connect"),
+        ("new-key", {"exc": ValueError("boom")}, "unknown"),
     ],
 )
 @pytest.mark.parametrize("flow", KEY_FLOWS)

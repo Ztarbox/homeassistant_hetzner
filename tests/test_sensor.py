@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
-import logging
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -439,6 +438,44 @@ async def test_missing_stats_and_type(
     assert device.model is None
 
 
+async def test_malformed_nested_values(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    storage_box: dict[str, Any],
+) -> None:
+    """Nested values that are no objects count as missing instead of failing."""
+    storage_box["stats"] = "300 GB"
+    storage_box["storage_box_type"] = "bx11"
+    storage_box["location"] = "fsn1"
+    storage_box["access_settings"] = ["ssh_enabled"]
+    _mock_box(aioclient_mock, storage_box)
+    await _setup(hass, config_entry)
+
+    assert config_entry.state is ConfigEntryState.LOADED
+    for suffix in SIZE_ENTITIES.values():
+        state = hass.states.get(f"{PREFIX}_{suffix}")
+        assert state is not None
+        assert state.state == STATE_UNKNOWN, suffix
+    status = hass.states.get(PREFIX)
+    assert status is not None
+    assert status.state == "active"
+    assert status.attributes["storage_box_type"] is None
+    location = hass.states.get(f"{PREFIX}_location")
+    assert location is not None
+    assert location.state == STATE_UNKNOWN
+    assert location.attributes["city"] is None
+    for entity_id in BINARY_ENTITIES:
+        state = hass.states.get(entity_id)
+        assert state is not None
+        assert state.state == STATE_UNKNOWN, entity_id
+    device = dr.async_get(hass).async_get_device_by_identifier(
+        (DOMAIN, STORAGE_BOX_ID), config_entry.entry_id
+    )
+    assert device is not None
+    assert device.model is None
+
+
 @pytest.mark.parametrize("payload", [None, {}])
 async def test_empty_storage_box(
     hass: HomeAssistant,
@@ -842,29 +879,6 @@ async def test_later_refresh_auth_failed(
         assert state is not None
         assert state.state == STATE_UNAVAILABLE, entity_id
     assert len(_reauth_flows(hass)) == 1
-
-
-async def test_missing_storage_box_id(
-    hass: HomeAssistant,
-    aioclient_mock: AiohttpClientMocker,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Without a storage box id setup fails, logs an error and adds no entities."""
-    entry = _make_entry(hass, storage_box_id=None)
-    with caplog.at_level(logging.ERROR):
-        await _setup(hass, entry)
-
-    assert entry.state is ConfigEntryState.SETUP_ERROR
-    assert not hasattr(entry, "runtime_data")
-    assert entry.reason == (
-        "The config entry has no storage box ID. Delete it and add the "
-        "integration again"
-    )
-    assert "The config entry has no storage box ID" in caplog.text
-    assert aioclient_mock.call_count == 0
-    assert hass.states.async_entity_ids() == []
-    ent_reg = er.async_get(hass)
-    assert er.async_entries_for_config_entry(ent_reg, entry.entry_id) == []
 
 
 async def test_unload_entry(

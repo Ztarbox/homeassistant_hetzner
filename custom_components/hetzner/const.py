@@ -19,7 +19,7 @@ SIZE_METRICS = ("total", "used", "data", "snapshots", "free")
 SIZE_SUGGESTED_UNIT = UnitOfInformation.GIBIBYTES
 
 # Values of the status field of a storage box in the API
-STORAGE_BOX_STATUSES = ["active", "initializing", "locked"]
+STORAGE_BOX_STATUSES = ("active", "initializing", "locked")
 
 # Display unit setting of config entries before version 5, only read by the
 # migration: stored in data (< v4) or options (v4), default bytes

@@ -23,6 +23,7 @@ from custom_components.hetzner.api import (
     HetznerNotFoundError,
     HetznerResponseError,
     HetznerTimeoutError,
+    as_dict,
 )
 from custom_components.hetzner.const import DEFAULT_HOST
 
@@ -152,11 +153,21 @@ async def test_list_storage_boxes_error_on_later_page(
         await _client(hass).async_list_storage_boxes()
 
 
-@pytest.mark.parametrize("payload", [{}, {"storage_boxes": None}])
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"storage_boxes": None},
+        # A dict would give its keys, a string its characters
+        {"storage_boxes": {"id": 1}},
+        {"storage_boxes": "boxes"},
+        {"storage_boxes": [None, "box", 1, ["box"]]},
+    ],
+)
 async def test_list_storage_boxes_missing(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, payload: Any
 ) -> None:
-    """A response without boxes is an empty list."""
+    """A response without usable boxes is an empty list."""
     aioclient_mock.get(LIST_URL, json=payload)
 
     assert await _client(hass).async_list_storage_boxes() == []
@@ -174,7 +185,21 @@ async def test_get_storage_box(
     assert str(aioclient_mock.mock_calls[0][1]) == BOX_URL
 
 
-@pytest.mark.parametrize("payload", [{}, {"storage_box": None}])
+async def test_list_storage_boxes_skips_malformed(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    storage_box: dict[str, Any],
+) -> None:
+    """Elements that are no objects are left out, the boxes stay."""
+    aioclient_mock.get(LIST_URL, json={"storage_boxes": [None, storage_box, "box", 42]})
+
+    assert await _client(hass).async_list_storage_boxes() == [storage_box]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [{}, {"storage_box": None}, {"storage_box": "box"}, {"storage_box": [1]}],
+)
 async def test_get_storage_box_missing(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, payload: Any
 ) -> None:
@@ -202,14 +227,45 @@ async def test_list_subaccounts(
     assert headers == {"Authorization": f"Bearer {API_KEY}"}
 
 
-@pytest.mark.parametrize("payload", [{}, {"subaccounts": None}, {"subaccounts": []}])
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"subaccounts": None},
+        {"subaccounts": []},
+        {"subaccounts": {"id": 42}},
+        {"subaccounts": "sub1"},
+        {"subaccounts": [None, "sub1", 42]},
+    ],
+)
 async def test_list_subaccounts_missing(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, payload: Any
 ) -> None:
-    """A box without subaccounts is an empty list."""
+    """A box without (usable) subaccounts is an empty list."""
     aioclient_mock.get(SUBACCOUNTS_URL, json=payload)
 
     assert await _client(hass).async_list_subaccounts(STORAGE_BOX_ID) == []
+
+
+async def test_list_subaccounts_skips_malformed(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """Elements that are no objects are left out, the subaccounts stay."""
+    aioclient_mock.get(SUBACCOUNTS_URL, json={"subaccounts": ["sub", SUBACCOUNT, None]})
+
+    assert await _client(hass).async_list_subaccounts(STORAGE_BOX_ID) == [SUBACCOUNT]
+
+
+@pytest.mark.parametrize("value", [None, "text", 1, True, ["a"]])
+def test_as_dict_non_object(value: Any) -> None:
+    """Anything but a JSON object becomes an empty dict."""
+    assert as_dict(value) == {}
+
+
+def test_as_dict_object() -> None:
+    """A JSON object is returned as it is."""
+    value = {"name": "bx11"}
+    assert as_dict(value) is value
 
 
 @pytest.mark.parametrize(

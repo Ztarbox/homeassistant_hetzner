@@ -8,6 +8,7 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
+from .api import as_dict
 from .const import CONF_STORAGE_BOX_ID, DOMAIN
 from .coordinator import HetznerConfigEntry, HetznerDataUpdateCoordinator
 from .entity import (
@@ -82,7 +83,6 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up the access setting binary sensors of a box and its subaccounts."""
-    # Presence checked in __init__.async_setup_entry
     storage_box_id = config_entry.data[CONF_STORAGE_BOX_ID]
     # Already refreshed in __init__.async_setup_entry
     coordinator = config_entry.runtime_data
@@ -103,10 +103,8 @@ async def async_setup_entry(
     )
 
 
-def _access_setting(access_settings: Any, key: str) -> bool | None:
+def _access_setting(access_settings: dict[str, Any], key: str) -> bool | None:
     """Return one access setting, None if the API leaves it out or sends null."""
-    if not isinstance(access_settings, dict):
-        return None
     # Unknown rather than off when the API leaves a setting out
     value = access_settings.get(key)
     return None if value is None else bool(value)
@@ -131,7 +129,7 @@ class HetznerAccessSettingBinarySensor(HetznerEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool | None:
         return _access_setting(
-            self._box.get("access_settings"), self.entity_description.key
+            as_dict(self._box.get("access_settings")), self.entity_description.key
         )
 
 
@@ -154,5 +152,6 @@ class HetznerSubaccountAccessSettingBinarySensor(
     @property
     def is_on(self) -> bool | None:
         return _access_setting(
-            self._subaccount.get("access_settings"), self.entity_description.key
+            as_dict(self._subaccount.get("access_settings")),
+            self.entity_description.key,
         )

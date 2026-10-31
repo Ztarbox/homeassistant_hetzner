@@ -126,9 +126,6 @@
     }
   },
   "exceptions": {
-    "missing_storage_box_id": {
-      "message": "The config entry has no storage box ID. Delete it and add the integration again."
-    },
     "invalid_api_key": {
       "message": "The Hetzner API rejected the API token: {error}"
     },

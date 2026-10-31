@@ -144,7 +144,7 @@ class HetznerSubaccountEntity(HetznerEntity):
             # Registered in __init__.async_setup_entry before the platforms
             parent_device_id=dr.async_get_device_id_by_identifier(
                 self.coordinator.hass,
-                (DOMAIN, str(self._storage_box_id)),
+                (DOMAIN, self._storage_box_id),
                 config_entry_id=self.coordinator.config_entry.entry_id,
             ),
         )

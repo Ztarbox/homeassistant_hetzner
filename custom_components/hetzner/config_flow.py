@@ -8,12 +8,13 @@ from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import (
-    HetznerApiError,
     HetznerAuthError,
     HetznerClient,
     HetznerConnectionError,
+    HetznerError,
     HetznerNotFoundError,
     HetznerTimeoutError,
+    as_dict,
 )
 from .const import CONF_STORAGE_BOX_ID, CONFIG_ENTRY_VERSION, DEFAULT_HOST, DOMAIN
 
@@ -48,11 +49,18 @@ class StorageBoxInfo(TypedDict):
     description: str | None
 
 
-def _error_key(err: Exception, storage_box_id: str | None = None) -> str:
+def _error_key(err: HetznerError, storage_box_id: str | None = None) -> str:
     """Map an API error to a form error key.
 
     Expected failures are shown in the form, so they are only logged at
     debug level.
+
+    Args:
+        err: Error raised by the API client
+        storage_box_id: Box queried, None if the storage box list was requested
+
+    Returns:
+        Error key of the form
     """
     if isinstance(err, HetznerAuthError):
         _LOGGER.debug("Hetzner API rejected the API key: %s", err)
@@ -69,18 +77,10 @@ def _error_key(err: Exception, storage_box_id: str | None = None) -> str:
     if isinstance(err, HetznerConnectionError):
         _LOGGER.debug("Error connecting to Hetzner API: %s", err)
         return "cannot_connect"
-    if isinstance(err, HetznerApiError):
-        _LOGGER.debug("Unexpected response from Hetzner API: %s", err)
-        return "api_error"
-    # Unexpected, so keep the traceback visible
-    _LOGGER.error("Unexpected error calling the Hetzner API", exc_info=err)
-    return "unknown"
-
-
-# Field key used for storage box selection; using the config constant
-# allows Home Assistant to look up a translation for this key under
-# `config.step.storage_box.data.storage_box_id`.
-STORAGE_BOX_SELECT_FIELD = CONF_STORAGE_BOX_ID
+    # HetznerApiError and any error class the client may add later: an error
+    # of the API, not of this integration
+    _LOGGER.debug("Unexpected response from Hetzner API: %s", err)
+    return "api_error"
 
 
 def create_storage_box_schema(
@@ -93,7 +93,8 @@ def create_storage_box_schema(
     """
     return vol.Schema(
         {
-            vol.Required(STORAGE_BOX_SELECT_FIELD): selector.SelectSelector(
+            # Translated as config.step.storage_box.data.storage_box_id
+            vol.Required(CONF_STORAGE_BOX_ID): selector.SelectSelector(
                 selector.SelectSelectorConfig(options=box_options)
             )
         }
@@ -116,7 +117,7 @@ class HetznerConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            api_key = user_input.get(CONF_API_KEY, "").strip()
+            api_key = user_input[CONF_API_KEY].strip()
             host = DEFAULT_HOST
 
             # Validate the API key is not empty
@@ -127,8 +128,11 @@ class HetznerConfigFlow(ConfigFlow, domain=DOMAIN):
                 # without requesting all pages a second time
                 try:
                     storage_boxes = await self._fetch_storage_boxes(api_key, host)
-                except Exception as err:  # noqa: BLE001
+                except HetznerError as err:
                     errors[CONF_API_KEY] = _error_key(err)
+                except Exception:
+                    _LOGGER.exception("Unexpected error listing the storage boxes")
+                    errors[CONF_API_KEY] = "unknown"
                 else:
                     _LOGGER.debug("API key validated successfully")
                     self.data = {
@@ -177,8 +181,8 @@ class HetznerConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            api_key = user_input.get(CONF_API_KEY, "").strip()
-            host = entry.data.get(CONF_HOST, DEFAULT_HOST)
+            api_key = user_input[CONF_API_KEY].strip()
+            host = entry.data[CONF_HOST]
 
             if not api_key:
                 errors[CONF_API_KEY] = "api_key_required"
@@ -213,12 +217,21 @@ class HetznerConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> str | None:
         """Check the API key has access to the storage box.
 
-        Returns None if valid, or error string if invalid.
+        Args:
+            api_key: API key to check
+            host: Host of the Hetzner API
+            storage_box_id: Storage box the key needs access to
+
+        Returns:
+            None if the key has access, else the error key of the form
         """
         try:
             await self._client(api_key, host).async_get_storage_box(storage_box_id)
-        except Exception as err:  # noqa: BLE001
+        except HetznerError as err:
             return _error_key(err, storage_box_id)
+        except Exception:
+            _LOGGER.exception("Unexpected error checking the API key")
+            return "unknown"
         _LOGGER.debug("API key validated successfully")
         return None
 
@@ -280,8 +293,11 @@ class HetznerConfigFlow(ConfigFlow, domain=DOMAIN):
         """
         storage_boxes: dict[str, StorageBoxInfo] = {}
         for box in await self._client(api_key, host).async_list_storage_boxes():
-            box_type = box.get("storage_box_type") or {}
-            storage_boxes[str(box.get("id"))] = {
+            # Without an id the box could not be selected or polled
+            if (box_id := box.get("id")) is None:
+                continue
+            box_type = as_dict(box.get("storage_box_type"))
+            storage_boxes[str(box_id)] = {
                 "name": box.get("name"),
                 "status": box.get("status"),
                 "box_type": box_type.get("name"),
@@ -305,9 +321,13 @@ class HetznerConfigFlow(ConfigFlow, domain=DOMAIN):
                 storage_boxes = await self._fetch_storage_boxes(
                     self.data[CONF_API_KEY], self.data[CONF_HOST]
                 )
-            except Exception as err:  # noqa: BLE001
+            except HetznerError as err:
                 # Not "no_storage_boxes": the key may well have boxes
                 errors["base"] = _error_key(err)
+                storage_boxes = {}
+            except Exception:
+                _LOGGER.exception("Unexpected error listing the storage boxes")
+                errors["base"] = "unknown"
                 storage_boxes = {}
         if not storage_boxes and not errors:
             errors["base"] = "no_storage_boxes"
@@ -323,7 +343,7 @@ class HetznerConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input:
             # The dropdown submits the box ID, which stays stable while the
             # box's status or name may change between showing and submitting
-            selected_box_id = user_input.get(STORAGE_BOX_SELECT_FIELD, "")
+            selected_box_id = user_input.get(CONF_STORAGE_BOX_ID, "")
             selected_box = storage_boxes.get(selected_box_id)
 
             if selected_box_id in self._async_current_ids(include_ignore=False):

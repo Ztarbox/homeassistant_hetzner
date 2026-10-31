@@ -18,6 +18,7 @@ from .api import (
     HetznerClient,
     HetznerConnectionError,
     HetznerNotFoundError,
+    as_dict,
 )
 from .const import DOMAIN
 
@@ -55,10 +56,10 @@ def storage_box_device_info(storage_box_id: str, box: dict[str, Any]) -> DeviceI
     """Return the device info of the storage box device."""
     box_name = box.get("name") or storage_box_id
     return DeviceInfo(
-        identifiers={(DOMAIN, str(storage_box_id))},
+        identifiers={(DOMAIN, storage_box_id)},
         name=f"Storage Box {box_name}",
         manufacturer="Hetzner",
-        model=(box.get("storage_box_type") or {}).get("name"),
+        model=as_dict(box.get("storage_box_type")).get("name"),
         configuration_url=CONFIGURATION_URL,
     )
 
@@ -169,7 +170,7 @@ class HetznerDataUpdateCoordinator(DataUpdateCoordinator[StorageBoxData]):
                 str(subaccount["id"]): subaccount
                 for subaccount in subaccounts
                 # Without an id there is nothing to identify it by
-                if isinstance(subaccount, dict) and subaccount.get("id") is not None
+                if subaccount.get("id") is not None
             },
         )
         self._async_update_devices(data)
@@ -191,7 +192,7 @@ class HetznerDataUpdateCoordinator(DataUpdateCoordinator[StorageBoxData]):
 
         # Registered by async_setup_entry after the first refresh
         if box_device := device_registry.async_get_device_by_identifier(
-            (DOMAIN, str(self._storage_box_id)), entry_id
+            (DOMAIN, self._storage_box_id), entry_id
         ):
             box_info = storage_box_device_info(self._storage_box_id, data.box)
             device_registry.async_update_device(

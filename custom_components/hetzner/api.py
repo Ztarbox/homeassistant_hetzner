@@ -71,10 +71,11 @@ class HetznerClient:
             data = await self._async_get(
                 "storage_boxes", {"page": page, "per_page": LIST_PAGE_SIZE}
             )
-            boxes = list(data.get("storage_boxes") or [])
+            boxes = _dict_items(data.get("storage_boxes"))
             storage_boxes.extend(boxes)
             next_page = _next_page(data)
-            # An empty page or a next_page not after this one would never end
+            # An empty page (or one without usable boxes) or a next_page not
+            # after this one would never end
             if not boxes or next_page is None or next_page <= page:
                 return storage_boxes
             page = next_page
@@ -82,7 +83,7 @@ class HetznerClient:
     async def async_get_storage_box(self, storage_box_id: str) -> dict[str, Any]:
         """Return one storage box."""
         data = await self._async_get(f"storage_boxes/{storage_box_id}")
-        return dict(data.get("storage_box") or {})
+        return as_dict(data.get("storage_box"))
 
     async def async_list_subaccounts(self, storage_box_id: str) -> list[dict[str, Any]]:
         """Return all subaccounts of one storage box.
@@ -91,7 +92,7 @@ class HetznerClient:
         parameters and no meta.pagination: one response holds all of them.
         """
         data = await self._async_get(f"storage_boxes/{storage_box_id}/subaccounts")
-        return list(data.get("subaccounts") or [])
+        return _dict_items(data.get("subaccounts"))
 
     async def _async_get(
         self, path: str, params: dict[str, int] | None = None
@@ -120,6 +121,26 @@ class HetznerClient:
         if not isinstance(data, dict):
             raise HetznerApiError(200, "invalid_json")
         return data
+
+
+def as_dict(value: Any) -> dict[str, Any]:
+    """Return a JSON object of an API response, empty for anything else.
+
+    Guards nested objects (e.g. storage_box_type, location) against null or
+    malformed values, so callers can use .get() on the result.
+    """
+    return value if isinstance(value, dict) else {}
+
+
+def _dict_items(value: Any) -> list[dict[str, Any]]:
+    """Return the JSON objects of a list in an API response.
+
+    Anything but a list counts as empty, elements that are no objects are
+    left out: callers read every element with .get().
+    """
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
 
 
 def _next_page(data: dict[str, Any]) -> int | None:

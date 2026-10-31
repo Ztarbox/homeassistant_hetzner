@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import CONF_API_KEY, CONF_HOST, Platform
-from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryError
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import (
     device_registry as dr,
     entity_registry as er,
@@ -16,7 +16,6 @@ from homeassistant.helpers import (
 from .const import (
     CONF_STORAGE_BOX_ID,
     CONFIG_ENTRY_VERSION,
-    DEFAULT_HOST,
     DOMAIN,
     LEGACY_CONF_UNIT,
     LEGACY_DEFAULT_UNIT,
@@ -45,18 +44,14 @@ async def async_setup_entry(
     hass: HomeAssistant, config_entry: HetznerConfigEntry
 ) -> bool:
     """Set up Hetzner from a config entry."""
-    storage_box_id = config_entry.data.get(CONF_STORAGE_BOX_ID)
-    if storage_box_id is None:
-        # Shown as the reason in the UI; the entry has to be added again
-        raise ConfigEntryError(
-            translation_domain=DOMAIN, translation_key="missing_storage_box_id"
-        )
+    # Every config flow version stored the box id (as str) and the host
+    storage_box_id: str = config_entry.data[CONF_STORAGE_BOX_ID]
 
     coordinator = HetznerDataUpdateCoordinator(
         hass,
         config_entry,
         config_entry.data[CONF_API_KEY],
-        config_entry.data.get(CONF_HOST, DEFAULT_HOST),
+        config_entry.data[CONF_HOST],
         storage_box_id,
     )
     # Refresh here rather than in the platform: HA only turns
@@ -108,10 +103,9 @@ async def async_remove_config_entry_device(
     The storage box device stays as long as the entry exists. Subaccount
     devices are normally removed by the coordinator already.
     """
-    storage_box_id = config_entry.data.get(CONF_STORAGE_BOX_ID)
-    if storage_box_id is None:
-        return False
-    subaccount_ids = subaccount_ids_of_device(device_entry.identifiers, storage_box_id)
+    subaccount_ids = subaccount_ids_of_device(
+        device_entry.identifiers, config_entry.data[CONF_STORAGE_BOX_ID]
+    )
     if not subaccount_ids:
         return False
     # Not loaded (e.g. waiting for a setup retry): nothing tells whether the
@@ -152,7 +146,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
             str(options_unit or data_unit or LEGACY_DEFAULT_UNIT).lower(),
             LEGACY_DEFAULT_UNIT,
         )
-        await _async_migrate_size_sensors(hass, config_entry, old_unit)
+        _async_migrate_size_sensors(hass, config_entry, old_unit)
         _async_remove_access_options_sensor(hass, config_entry)
         hass.config_entries.async_update_entry(
             config_entry, data=data, options=options, version=5
@@ -180,7 +174,8 @@ def _size_unique_id(unique_id: str) -> str | None:
     return None
 
 
-async def _async_migrate_size_sensors(
+@callback
+def _async_migrate_size_sensors(
     hass: HomeAssistant, config_entry: ConfigEntry, old_unit: str
 ) -> None:
     """Drop the unit from size sensor unique_ids and keep the displayed unit.
@@ -209,9 +204,10 @@ async def _async_migrate_size_sensors(
             continue
 
         new_unique_id = _size_unique_id(entry.unique_id)
-        assert new_unique_id is not None
-        await _safe_update_unique_id(
-            hass=hass,
+        if TYPE_CHECKING:
+            # Only size sensors were selected above
+            assert new_unique_id is not None
+        _safe_update_unique_id(
             entity_registry=entity_registry,
             entity_entry=entry,
             new_unique_id=new_unique_id,
@@ -234,13 +230,12 @@ async def _async_migrate_size_sensors(
         )
 
 
+@callback
 def _async_remove_access_options_sensor(
     hass: HomeAssistant, config_entry: ConfigEntry
 ) -> None:
     """Remove the access options sensor, replaced by binary sensors."""
-    storage_box_id = config_entry.data.get(CONF_STORAGE_BOX_ID)
-    if storage_box_id is None:
-        return
+    storage_box_id = config_entry.data[CONF_STORAGE_BOX_ID]
     entity_registry = er.async_get(hass)
     if entity_id := entity_registry.async_get_entity_id(
         SENSOR_DOMAIN,
@@ -250,14 +245,14 @@ def _async_remove_access_options_sensor(
         entity_registry.async_remove(entity_id)
 
 
-async def _safe_update_unique_id(
-    hass: HomeAssistant,
+@callback
+def _safe_update_unique_id(
     entity_registry: er.EntityRegistry,
     entity_entry: er.RegistryEntry,
     new_unique_id: str,
 ) -> None:
     """Safely update a unique_id, removing conflicting stale entries if needed."""
-    old_unique_id = str(entity_entry.unique_id)
+    old_unique_id = entity_entry.unique_id
 
     if old_unique_id == new_unique_id:
         return
