@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import CONF_API_KEY, CONF_HOST, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryError
@@ -116,7 +116,7 @@ async def async_remove_config_entry_device(
         return False
     # Not loaded (e.g. waiting for a setup retry): nothing tells whether the
     # subaccount still exists, but if it does, the next setup adds it again
-    if not hasattr(config_entry, "runtime_data"):
+    if config_entry.state is not ConfigEntryState.LOADED:
         return True
     return not subaccount_ids & set(config_entry.runtime_data.data.subaccounts)
 
