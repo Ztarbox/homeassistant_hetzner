@@ -19,10 +19,15 @@
 - [Sensors and Attributes](#sensors-and-attributes)
 - [Binary Sensors](#binary-sensors)
 - [Subaccounts](#subaccounts)
+- [Automation Examples](#automation-examples)
+  - [Notify when the Storage Box is running full](#notify-when-the-storage-box-is-running-full)
+  - [Notify when the Storage Box stays locked](#notify-when-the-storage-box-stays-locked)
+  - [Notify when external access is switched on](#notify-when-external-access-is-switched-on)
 - [Update Interval](#update-interval)
 - [Troubleshooting](#troubleshooting)
   - [Storage Box Not Found](#storage-box-not-found)
   - [API Errors and Maintenance](#api-errors-and-maintenance)
+  - [Diagnostics](#diagnostics)
 - [Removing the Integration](#removing-the-integration)
 - [Development](#development)
 
@@ -191,6 +196,68 @@ All subaccount entities are diagnostic entities. The SSH, Samba and WebDAV binar
 | `sensor.storage_box_backup_sub1_home_directory` | The directory the subaccount is limited to (unknown if longer than 255 characters); attributes `username`, `server` (FQDN to connect to) and `description` |
 
 Subaccounts are picked up automatically: one created in the Hetzner Console appears with the next update (within 10 minutes), and the device of a deleted subaccount is removed together with its entities. While the Hetzner API cannot be read, nothing is removed. A leftover subaccount device that the API no longer lists can also be deleted by hand on its device page; the Storage Box device itself cannot be deleted while the integration entry exists.
+
+## Automation Examples
+
+The examples use a box named `backup`; replace `backup` with the name in your entity IDs, and `notify.mobile_app_my_phone` with your own notify action (the companion app registers one per phone as `notify.mobile_app_<device name>`). Paste them in the automation editor under **Edit in YAML**.
+
+### Notify when the Storage Box is running full
+
+Sends a notification once free space has stayed below 200 GiB for an hour. The threshold is in the sensor's unit, GiB unless you changed it (see [Changing the Unit](#changing-the-unit)). The `for` keeps one short dip from sending a message; the sensor is updated every 10 minutes.
+
+```yaml
+alias: "Storage Box: running full"
+triggers:
+  - trigger: numeric_state
+    entity_id: sensor.storage_box_backup_free_space
+    below: 200
+    for: "01:00:00"
+actions:
+  - action: notify.mobile_app_my_phone
+    data:
+      title: Hetzner Storage Box is running full
+      message: >-
+        Only {{ states('sensor.storage_box_backup_free_space') | float(0) | round(1) }} GiB
+        left. Check the backup retention or upgrade the Storage Box.
+```
+
+The trigger fires when free space goes below the threshold, not on every update while it stays there. After a Home Assistant restart, or after the sensor was unavailable (for example during Hetzner maintenance), Home Assistant treats the next value below the threshold as a new crossing, so the message can come once more. Instead of a notify action you can run a script of your own (`action: script.<name>`) or create a notification in Home Assistant (`action: persistent_notification.create` with the same `title` and `message`).
+
+### Notify when the Storage Box stays locked
+
+Sends a notification when the status sensor has shown `locked` for 30 minutes. The `for` skips locks that end again within that time.
+
+```yaml
+alias: "Storage Box: locked"
+triggers:
+  - trigger: state
+    entity_id: sensor.storage_box_backup
+    to: locked
+    for: "00:30:00"
+actions:
+  - action: notify.mobile_app_my_phone
+    data:
+      title: Hetzner Storage Box locked
+      message: The Storage Box backup has been locked for 30 minutes. Check the Hetzner Console.
+```
+
+### Notify when external access is switched on
+
+Warns when the Storage Box becomes reachable from outside the Hetzner network, for example after a change in the Hetzner Console. `binary_sensor.storage_box_backup_reachable_externally` is enabled by default; the same works for a subaccount, for example with `binary_sensor.storage_box_backup_sub1_reachable_externally`.
+
+```yaml
+alias: "Storage Box: reachable externally"
+triggers:
+  - trigger: state
+    entity_id: binary_sensor.storage_box_backup_reachable_externally
+    from: "off"
+    to: "on"
+actions:
+  - action: notify.mobile_app_my_phone
+    data:
+      title: Hetzner Storage Box reachable externally
+      message: The Storage Box backup can now be reached from outside the Hetzner network.
+```
 
 ## Update Interval
 
