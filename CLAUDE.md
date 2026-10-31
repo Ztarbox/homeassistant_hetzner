@@ -12,11 +12,12 @@ Use Python 3.14 in a virtualenv.
 
 ```bash
 pip install -r requirements.dev.txt
-pytest . --black --isort --flake8 --mypy   # full check, as documented in README (run before pushing)
+ruff check . && ruff format --check . && mypy custom_components tests && pytest   # full check, as documented in README (run before pushing)
+ruff check --fix . && ruff format .            # fix lint findings and format
 pytest tests/test_api.py::test_get_storage_box # single test
 ```
 
-CI (`.github/workflows/`) runs pytest, black, isort, flake8, mypy separately, plus hassfest and HACS validation. Style config (88 cols, isort `force_sort_within_sections`, flake8 ignores E501) is in `setup.cfg`. `tests/` is a full suite (pytest-homeassistant-custom-component, `aioclient_mock` for the API) that keeps every module at 100% coverage; check with `pytest --cov=custom_components.hetzner --cov-report=term-missing`. `tests/test_translations.py` checks that `strings.json` equals `translations/en.json`, that de/nl have the same keys and placeholders, and that every translation key used in the code exists.
+CI (`.github/workflows/`) runs pytest, ruff (check and format) and mypy separately, plus hassfest and HACS validation. All tool config is in `pyproject.toml`: ruff (88 cols, `target-version` py314, a rule selection close to HA core's incl. pydocstyle (google convention; every module, class and function has a docstring), pylint, bugbear, tryceratops and unused arguments (`# noqa: ARG001`/`ARG002` only on parameters HA's signatures dictate, e.g. `hass`), the ignores HA core uses (E501, PLR0911-PLR0915, PLR2004, TRY003, ...), isort `force-sort-within-sections`/`combine-as-imports`), pytest (`--strict-markers`, coverage) and mypy (`strict = true`, `explicit_package_bases` because `custom_components` has no `__init__.py`; tests only disable `comparison-overlap`, which flags entry state asserts after a reload). No `from __future__ import annotations` (Python 3.14 evaluates annotations lazily). `tests/` is a full suite (pytest-homeassistant-custom-component, `aioclient_mock` for the API) that keeps every module at 100% coverage; check with `pytest --cov=custom_components.hetzner --cov-report=term-missing`. `tests/test_translations.py` checks that `strings.json` equals `translations/en.json`, that de/nl have the same keys and placeholders, and that every translation key used in the code exists.
 
 ## Architecture
 

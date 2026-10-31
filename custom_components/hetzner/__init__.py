@@ -1,4 +1,4 @@
-from __future__ import annotations
+"""The Hetzner Storage Box integration."""
 
 import logging
 from typing import TYPE_CHECKING
@@ -95,7 +95,7 @@ async def async_remove_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> 
 
 
 async def async_remove_config_entry_device(
-    hass: HomeAssistant,
+    hass: HomeAssistant,  # noqa: ARG001
     config_entry: HetznerConfigEntry,
     device_entry: dr.AnyDeviceEntry,
 ) -> bool:

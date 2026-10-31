@@ -1,3 +1,5 @@
+"""Sensors of a Hetzner Storage Box."""
+
 from collections.abc import Callable
 from dataclasses import dataclass
 import logging
@@ -113,7 +115,7 @@ SIZE_SENSORS: tuple[HetznerSizeSensorEntityDescription, ...] = (
 
 
 async def async_setup_entry(
-    hass: HomeAssistant,
+    hass: HomeAssistant,  # noqa: ARG001
     config_entry: HetznerConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
@@ -148,7 +150,6 @@ class HetznerStatusSensor(HetznerEntity, SensorEntity):
     """Sensor representing the storage box status and details."""
 
     _attr_device_class = SensorDeviceClass.ENUM
-    _attr_options = list(STORAGE_BOX_STATUSES)
     # Translates the states and picks the icon; the name stays the device's
     _attr_translation_key = "status"
     # Details of the box that rarely change (name, type on an up- or
@@ -160,7 +161,9 @@ class HetznerStatusSensor(HetznerEntity, SensorEntity):
     def __init__(
         self, coordinator: HetznerDataUpdateCoordinator, storage_box_id: str
     ) -> None:
+        """Initialize the status sensor."""
         super().__init__(coordinator, storage_box_id)
+        self._attr_options = list(STORAGE_BOX_STATUSES)
         self._attr_unique_id = storage_box_unique_id(self._storage_box_id)
         # Main feature of the device: entity takes the device name
         self._attr_name = None
@@ -168,6 +171,7 @@ class HetznerStatusSensor(HetznerEntity, SensorEntity):
 
     @property
     def native_value(self) -> str | None:
+        """Return the status, None if the API sent an unknown one."""
         data = self._box
         status = data.get("status")
         if status is None or status in STORAGE_BOX_STATUSES:
@@ -183,6 +187,7 @@ class HetznerStatusSensor(HetznerEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
+        """Return details of the storage box."""
         data = self._box
         s_type = as_dict(data.get("storage_box_type"))
         return {
@@ -209,15 +214,18 @@ class HetznerLocationSensor(HetznerEntity, SensorEntity):
     def __init__(
         self, coordinator: HetznerDataUpdateCoordinator, storage_box_id: str
     ) -> None:
+        """Initialize the location sensor."""
         super().__init__(coordinator, storage_box_id)
         self._attr_unique_id = storage_box_unique_id(self._storage_box_id, "location")
 
     @property
     def native_value(self) -> str | None:
+        """Return the name of the location."""
         return as_dict(self._box.get("location")).get("name")
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
+        """Return details of the location."""
         location = as_dict(self._box.get("location"))
         return {
             "id": location.get("id"),
@@ -250,6 +258,7 @@ class HetznerSizeSensor(HetznerEntity, SensorEntity):
         storage_box_id: str,
         description: HetznerSizeSensorEntityDescription,
     ) -> None:
+        """Initialize the sensor of one size."""
         super().__init__(coordinator, storage_box_id)
         self.entity_description = description
         self._object_id_name = OBJECT_ID_NAMES[str(description.translation_key)]
@@ -259,6 +268,7 @@ class HetznerSizeSensor(HetznerEntity, SensorEntity):
 
     @property
     def native_value(self) -> int | None:
+        """Return the size in bytes, None if the API data is missing."""
         return self.entity_description.value_fn(self._box)
 
 
@@ -277,10 +287,12 @@ class HetznerSubaccountHomeDirectorySensor(HetznerSubaccountEntity, SensorEntity
         storage_box_id: str,
         subaccount_id: str,
     ) -> None:
+        """Initialize the home directory sensor of one subaccount."""
         super().__init__(coordinator, storage_box_id, subaccount_id, "home_directory")
 
     @property
     def native_value(self) -> str | None:
+        """Return the home directory, None if it does not fit in a state."""
         home_directory = self._subaccount.get("home_directory")
         # The API allows 999 characters, a state 255; HA would log an error on
         # every update and fall back to unknown anyway
@@ -290,6 +302,7 @@ class HetznerSubaccountHomeDirectorySensor(HetznerSubaccountEntity, SensorEntity
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
+        """Return the login details and description of the subaccount."""
         # What is needed to connect, and the subaccount's own description
         subaccount = self._subaccount
         return {

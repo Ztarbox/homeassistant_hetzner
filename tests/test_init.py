@@ -1,7 +1,5 @@
 """Tests for the Hetzner Storage Box integration setup and migrations."""
 
-from __future__ import annotations
-
 from typing import Any
 from unittest.mock import patch
 
@@ -110,7 +108,7 @@ def _register(
     )
 
 
-def _old_size_ids(version: int, unit: str) -> dict[str, str]:
+def _old_size_ids(unit: str) -> dict[str, str]:
     """Return the size sensor unique_ids an entry of version 2 to 4 used."""
     return {metric: f"{PREFIX}_{metric}_{unit.lower()}" for metric in METRICS}
 
@@ -197,7 +195,7 @@ async def test_migrate_to_v5(
     entry = _make_entry(hass, version, unit=unit)
     old = {
         metric: _register(hass, unique_id, entry, unit)
-        for metric, unique_id in _old_size_ids(version, unit).items()
+        for metric, unique_id in _old_size_ids(unit).items()
     }
     status = _register(hass, PREFIX, entry)
     location = _register(hass, f"{PREFIX}_location", entry)

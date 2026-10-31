@@ -1,8 +1,5 @@
 """Tests for the Hetzner API client."""
 
-from __future__ import annotations
-
-import asyncio
 from typing import Any
 
 import aiohttp
@@ -277,7 +274,7 @@ def test_as_dict_object() -> None:
         ({"status": 404, "json": _error_body("not_found")}, HetznerNotFoundError),
         ({"status": 500}, HetznerApiError),
         ({"text": "not json"}, HetznerApiError),
-        ({"exc": asyncio.TimeoutError()}, HetznerTimeoutError),
+        ({"exc": TimeoutError()}, HetznerTimeoutError),
         ({"exc": aiohttp.ClientError("boom")}, HetznerConnectionError),
     ],
 )
@@ -386,7 +383,7 @@ async def test_auth_error_on_list(
 @pytest.mark.parametrize(
     ("exc", "exc_type"),
     [
-        (asyncio.TimeoutError(), HetznerTimeoutError),
+        (TimeoutError(), HetznerTimeoutError),
         (aiohttp.ClientError("boom"), HetznerConnectionError),
         (aiohttp.ClientConnectionError("refused"), HetznerConnectionError),
     ],

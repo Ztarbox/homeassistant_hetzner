@@ -1,7 +1,5 @@
 """Tests for the diagnostics of a storage box config entry."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from homeassistant.components.diagnostics import REDACTED

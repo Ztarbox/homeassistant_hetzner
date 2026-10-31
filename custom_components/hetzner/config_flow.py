@@ -1,3 +1,5 @@
+"""Config flow for Hetzner Storage Boxes."""
+
 from collections.abc import Mapping
 import logging
 from typing import TYPE_CHECKING, Any, TypedDict
@@ -149,7 +151,8 @@ class HetznerConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_reauth(
-        self, entry_data: Mapping[str, Any]
+        self,
+        entry_data: Mapping[str, Any],  # noqa: ARG002
     ) -> ConfigFlowResult:
         """Start reauthentication after the API rejected the key."""
         return await self.async_step_reauth_confirm()

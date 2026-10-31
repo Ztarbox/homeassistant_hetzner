@@ -1,3 +1,5 @@
+"""Constants of the Hetzner Storage Box integration."""
+
 from homeassistant.const import UnitOfInformation
 
 DOMAIN = "hetzner"

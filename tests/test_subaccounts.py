@@ -1,7 +1,5 @@
 """Tests for the subaccount devices and entities of a storage box."""
 
-from __future__ import annotations
-
 from datetime import timedelta
 from typing import Any
 from unittest.mock import MagicMock

@@ -1,3 +1,5 @@
+"""Data update coordinator of a Hetzner Storage Box."""
+
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -110,6 +112,7 @@ class HetznerDataUpdateCoordinator(DataUpdateCoordinator[StorageBoxData]):
         host: str,
         storage_box_id: str,
     ) -> None:
+        """Initialize the coordinator and its API client."""
         super().__init__(
             hass,
             _LOGGER,
@@ -121,6 +124,7 @@ class HetznerDataUpdateCoordinator(DataUpdateCoordinator[StorageBoxData]):
         self._storage_box_id = storage_box_id
 
     async def _async_update_data(self) -> StorageBoxData:
+        """Fetch the box and its subaccounts, then update their devices."""
         issue_id = storage_box_not_found_issue_id(self.config_entry.entry_id)
         try:
             storage_box = await self._client.async_get_storage_box(self._storage_box_id)

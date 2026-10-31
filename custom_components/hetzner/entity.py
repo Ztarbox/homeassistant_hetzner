@@ -1,3 +1,5 @@
+"""Base entities of a Hetzner Storage Box."""
+
 from collections.abc import Callable, Iterable
 from typing import Any
 
@@ -34,6 +36,7 @@ def async_add_subaccount_entities(
 
     @callback
     def _async_add_new_subaccounts() -> None:
+        """Add the entities of subaccounts not seen before."""
         current = set(coordinator.data.subaccounts)
         # Removed subaccounts lost their device and entities in the coordinator
         known.intersection_update(current)
@@ -61,6 +64,7 @@ class HetznerEntity(CoordinatorEntity[HetznerDataUpdateCoordinator]):
     def __init__(
         self, coordinator: HetznerDataUpdateCoordinator, storage_box_id: str
     ) -> None:
+        """Initialize an entity of the storage box storage_box_id."""
         super().__init__(coordinator)
         self._storage_box_id = storage_box_id
 
@@ -81,6 +85,7 @@ class HetznerEntity(CoordinatorEntity[HetznerDataUpdateCoordinator]):
 
     @property
     def device_info(self) -> DeviceInfo | ChildDeviceInfo:
+        """Return the storage box device."""
         return storage_box_device_info(self._storage_box_id, self._box)
 
 
@@ -99,6 +104,7 @@ class HetznerSubaccountEntity(HetznerEntity):
         subaccount_id: str,
         key: str,
     ) -> None:
+        """Initialize the entity key of one subaccount."""
         super().__init__(coordinator, storage_box_id)
         self._subaccount_id = subaccount_id
         self._attr_unique_id = storage_box_unique_id(
@@ -128,6 +134,7 @@ class HetznerSubaccountEntity(HetznerEntity):
 
     @property
     def device_info(self) -> ChildDeviceInfo:
+        """Return the subaccount's device, a child device of the box."""
         # The parent's name comes first in entity names and entity_ids, which
         # keeps them apart from the box's own (binary_sensor.storage_box_backup
         # _sub1_ssh vs ..._backup_ssh) and from equally named subaccounts of

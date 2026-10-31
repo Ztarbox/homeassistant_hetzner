@@ -4,8 +4,6 @@ Kept free of Home Assistant imports: callers pass in their aiohttp session
 and map the exceptions below to config flow errors or coordinator failures.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 import aiohttp
@@ -31,6 +29,7 @@ class HetznerResponseError(HetznerError):
     """The API answered with an error or an unusable response."""
 
     def __init__(self, status: int, code: str | None = None) -> None:
+        """Store the HTTP status and the API's error code, if any."""
         detail = f"HTTP {status}"
         if code:
             detail = f"{detail} ({code})"
@@ -55,6 +54,7 @@ class HetznerClient:
     """Read-only access to the storage boxes of one Hetzner project."""
 
     def __init__(self, session: aiohttp.ClientSession, api_key: str, host: str) -> None:
+        """Use the caller's session for requests to host with api_key."""
         self._session = session
         self._api_key = api_key
         self._host = host
@@ -163,7 +163,7 @@ async def _async_error_code(resp: aiohttp.ClientResponse) -> str | None:
     """
     try:
         body = await resp.json(content_type=None)
-    except (aiohttp.ClientError, ValueError):
+    except aiohttp.ClientError, ValueError:
         return None
     if not isinstance(body, dict):
         return None

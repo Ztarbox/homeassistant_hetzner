@@ -1,7 +1,5 @@
 """Tests for the Hetzner Storage Box sensor platform."""
 
-from __future__ import annotations
-
 import asyncio
 from datetime import timedelta
 from typing import Any
@@ -578,7 +576,9 @@ async def test_first_refresh_error_recovers_on_retry(
     await hass.async_block_till_done()
 
     assert config_entry.state is ConfigEntryState.LOADED
-    assert hass.states.get(PREFIX).state == "active"  # type: ignore[union-attr]
+    state = hass.states.get(PREFIX)
+    assert state is not None
+    assert state.state == "active"
 
 
 @pytest.mark.parametrize(

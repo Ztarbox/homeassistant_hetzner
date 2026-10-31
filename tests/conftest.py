@@ -1,13 +1,12 @@
 """Shared fixtures for the Hetzner Storage Box tests."""
 
-from __future__ import annotations
-
 from collections.abc import Generator
 import copy
 from typing import Any
 from unittest.mock import PropertyMock, patch
 
 from homeassistant.const import CONF_API_KEY, CONF_HOST
+from homeassistant.core import HomeAssistant
 import pytest
 from pytest_homeassistant_custom_component.common import (  # type: ignore[import-untyped]
     MockConfigEntry,
@@ -80,22 +79,9 @@ SUBACCOUNT: dict[str, Any] = {
 }
 
 
-def pytest_configure(config: pytest.Config) -> None:
-    """Map files to modules from the repo root when running ``--mypy``.
-
-    ``custom_components`` has no ``__init__.py``, so without
-    ``--explicit-package-bases`` mypy sees ``custom_components/hetzner/const.py``
-    both as ``hetzner.const`` (from the path) and as
-    ``custom_components.hetzner.const`` (from the test imports) and aborts.
-    """
-    plugin = config.pluginmanager.getplugin("mypy")
-    if plugin is not None:
-        plugin.mypy_argv.append("--explicit-package-bases")
-
-
 @pytest.fixture(autouse=True)
 def auto_enable_custom_integrations(
-    enable_custom_integrations: None,
+    enable_custom_integrations: None,  # noqa: ARG001
 ) -> Generator[None]:
     """Enable loading the custom integration in every test."""
     yield
@@ -125,7 +111,7 @@ def subaccount() -> dict[str, Any]:
 
 
 @pytest.fixture
-def config_entry(hass) -> MockConfigEntry:
+def config_entry(hass: HomeAssistant) -> MockConfigEntry:
     """Return a current-version config entry added to hass (not set up)."""
     entry = MockConfigEntry(
         domain=DOMAIN,

@@ -1,7 +1,5 @@
 """Diagnostics of a Hetzner Storage Box config entry."""
 
-from __future__ import annotations
-
 from dataclasses import asdict
 from typing import Any
 
@@ -19,7 +17,8 @@ TO_REDACT = {CONF_API_KEY, "username", "server", "latitude", "longitude"}
 
 
 async def async_get_config_entry_diagnostics(
-    hass: HomeAssistant, config_entry: HetznerConfigEntry
+    hass: HomeAssistant,  # noqa: ARG001
+    config_entry: HetznerConfigEntry,
 ) -> dict[str, Any]:
     """Return the config entry and the API data of the last update."""
     # runtime_data is only set once the first refresh succeeded

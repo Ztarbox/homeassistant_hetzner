@@ -1,7 +1,5 @@
 """Consistency checks of the translation and icon files against the code."""
 
-from __future__ import annotations
-
 import ast
 import json
 from pathlib import Path
@@ -185,9 +183,9 @@ def test_entity_translations() -> None:
 def test_object_id_names_match_english() -> None:
     """The English names behind the entity_ids are the English entity names."""
     sensors = EN["entity"]["sensor"]
-    assert OBJECT_ID_NAMES == {
+    assert {
         key: value["name"] for key, value in sensors.items() if "name" in value
-    }
+    } == OBJECT_ID_NAMES
     # Main account binary sensor names end with " (main account)"; the
     # entity_ids leave it out. Subaccount ones have their own device
     main_keys = {str(description.translation_key) for description in ACCESS_SETTINGS}

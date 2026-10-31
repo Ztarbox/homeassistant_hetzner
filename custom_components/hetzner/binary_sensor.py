@@ -1,3 +1,5 @@
+"""Binary sensors for the access settings of a Hetzner Storage Box."""
+
 from typing import Any
 
 from homeassistant.components.binary_sensor import (
@@ -82,7 +84,7 @@ OBJECT_ID_NAMES = {
 
 
 async def async_setup_entry(
-    hass: HomeAssistant,
+    hass: HomeAssistant,  # noqa: ARG001
     config_entry: HetznerConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
@@ -123,6 +125,7 @@ class HetznerAccessSettingBinarySensor(HetznerEntity, BinarySensorEntity):
         storage_box_id: str,
         description: BinarySensorEntityDescription,
     ) -> None:
+        """Initialize the binary sensor of one access setting."""
         super().__init__(coordinator, storage_box_id)
         self.entity_description = description
         self._attr_unique_id = storage_box_unique_id(
@@ -132,6 +135,7 @@ class HetznerAccessSettingBinarySensor(HetznerEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool | None:
+        """Return whether the access method is enabled."""
         return _access_setting(
             as_dict(self._box.get("access_settings")), self.entity_description.key
         )
@@ -149,12 +153,14 @@ class HetznerSubaccountAccessSettingBinarySensor(
         subaccount_id: str,
         description: BinarySensorEntityDescription,
     ) -> None:
+        """Initialize the binary sensor of one subaccount setting."""
         super().__init__(coordinator, storage_box_id, subaccount_id, description.key)
         self.entity_description = description
         self._object_id_name = OBJECT_ID_NAMES[str(description.translation_key)]
 
     @property
     def is_on(self) -> bool | None:
+        """Return whether the setting is enabled for the subaccount."""
         return _access_setting(
             as_dict(self._subaccount.get("access_settings")),
             self.entity_description.key,

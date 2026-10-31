@@ -298,8 +298,8 @@ After that you can run
 $ pip install -r requirements.dev.txt
 ```
 
-If you make any changes, please run pytest before pushing your changes.
+If you make any changes, please run the linters, the type checker and the tests before pushing your changes.
 
 ```bash
-$ pytest . --black --isort --flake8 --mypy
+$ ruff check . && ruff format --check . && mypy custom_components tests && pytest
 ```

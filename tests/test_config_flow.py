@@ -1,8 +1,5 @@
 """Tests for the Hetzner Storage Box config flow."""
 
-from __future__ import annotations
-
-import asyncio
 import logging
 from typing import Any
 from unittest.mock import patch
@@ -50,7 +47,7 @@ def _queue_list_responses(
     queue = list(responses)
 
     async def _side_effect(
-        method: str, url: URL, data: Any
+        method: str, url: URL, _data: Any
     ) -> AiohttpClientMockResponse:
         return AiohttpClientMockResponse(method, url, **queue.pop(0))
 
@@ -114,16 +111,21 @@ async def _start_key_flow(
     hass: HomeAssistant, entry: MockConfigEntry, flow: str
 ) -> ConfigFlowResult:
     """Start a reauth or reconfigure flow of the entry."""
+    # MockConfigEntry is untyped
+    result: ConfigFlowResult
     if flow == "reauth":
-        return await entry.start_reauth_flow(hass)
-    return await entry.start_reconfigure_flow(hass)
+        result = await entry.start_reauth_flow(hass)
+    else:
+        result = await entry.start_reconfigure_flow(hass)
+    return result
 
 
 def _schema(result: ConfigFlowResult) -> dict[Any, Any]:
     """Return the schema dict of a form result."""
     data_schema = result["data_schema"]
     assert data_schema is not None
-    return data_schema.schema
+    schema: dict[Any, Any] = data_schema.schema
+    return schema
 
 
 async def test_user_step_shows_form(hass: HomeAssistant) -> None:
@@ -174,7 +176,7 @@ async def test_user_step_api_key_required(
         ({"status": 404}, "invalid_host"),
         ({"status": 429}, "api_error"),
         ({"status": 500}, "api_error"),
-        ({"exc": asyncio.TimeoutError()}, "connection_timeout"),
+        ({"exc": TimeoutError()}, "connection_timeout"),
         ({"exc": aiohttp.ClientError("boom")}, "cannot_connect"),
         ({"exc": ValueError("boom")}, "unknown"),
     ],
@@ -408,7 +410,7 @@ async def test_storage_box_without_name_uses_id_in_title(
         ({"status": 403, "json": {"error": {"code": "forbidden"}}}, "invalid_api_key"),
         ({"status": 404}, "invalid_host"),
         ({"text": "not json"}, "api_error"),
-        ({"exc": asyncio.TimeoutError()}, "connection_timeout"),
+        ({"exc": TimeoutError()}, "connection_timeout"),
         ({"exc": aiohttp.ClientError("boom")}, "cannot_connect"),
         ({"exc": ValueError("boom")}, "unknown"),
     ],
@@ -496,10 +498,10 @@ async def test_storage_box_step_invalid_selection(
     assert result["result"].unique_id == STORAGE_BOX_ID
 
 
+@pytest.mark.usefixtures("config_entry")
 async def test_storage_box_step_already_configured(
     hass: HomeAssistant,
     aioclient_mock: AiohttpClientMocker,
-    config_entry: MockConfigEntry,
     storage_box: dict[str, Any],
 ) -> None:
     """Test a configured box is marked and selecting it shows an error."""
@@ -540,10 +542,10 @@ async def test_storage_box_step_already_configured(
     assert len(hass.config_entries.async_entries(DOMAIN)) == 2
 
 
+@pytest.mark.usefixtures("config_entry")
 async def test_storage_box_already_configured_in_two_flows(
     hass: HomeAssistant,
     aioclient_mock: AiohttpClientMocker,
-    config_entry: MockConfigEntry,
     storage_box: dict[str, Any],
 ) -> None:
     """Test a second flow picking a configured box gets the same form error.
@@ -736,9 +738,7 @@ async def test_reauth_flow_failed_entry_set_up_with_new_key(
     assert config_entry.runtime_data.data.box == storage_box
 
 
-async def test_no_options_flow(
-    hass: HomeAssistant, config_entry: MockConfigEntry
-) -> None:
+async def test_no_options_flow(config_entry: MockConfigEntry) -> None:
     """Test there are no options: units are set in the entity settings."""
     assert not HetznerConfigFlow.async_supports_options_flow(config_entry)
 
@@ -756,7 +756,7 @@ async def test_no_options_flow(
         ),
         ("new-key", {"status": 404}, "storage_box_not_found"),
         ("new-key", {"status": 500}, "api_error"),
-        ("new-key", {"exc": asyncio.TimeoutError()}, "connection_timeout"),
+        ("new-key", {"exc": TimeoutError()}, "connection_timeout"),
         ("new-key", {"exc": aiohttp.ClientError("boom")}, "cannot_connect"),
         ("new-key", {"exc": ValueError("boom")}, "unknown"),
     ],
