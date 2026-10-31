@@ -27,10 +27,10 @@ from .const import (
 from .coordinator import (
     HetznerConfigEntry,
     HetznerDataUpdateCoordinator,
+    storage_box_device_info,
     storage_box_not_found_issue_id,
     subaccount_ids_of_device,
 )
-from .entity import storage_box_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -65,8 +65,8 @@ async def async_setup_entry(
 
     config_entry.runtime_data = coordinator
 
-    # Subaccount devices link to the box device by its registry id, so it has
-    # to exist before the platforms add their entities
+    # Subaccount devices are child devices of the box device, linked by its
+    # registry id, so it has to exist before the platforms add their entities
     dr.async_get(hass).async_get_or_create(
         config_entry_id=config_entry.entry_id,
         **storage_box_device_info(storage_box_id, coordinator.data.box),

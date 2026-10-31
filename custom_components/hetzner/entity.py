@@ -3,7 +3,7 @@ from typing import Any
 
 from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.device_registry import ChildDeviceInfo, DeviceInfo
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -12,22 +12,10 @@ from .const import DOMAIN
 from .coordinator import (
     HetznerConfigEntry,
     HetznerDataUpdateCoordinator,
+    storage_box_device_info,
     subaccount_device_identifier,
+    subaccount_device_name,
 )
-
-CONFIGURATION_URL = "https://console.hetzner.com"
-
-
-def storage_box_device_info(storage_box_id: str, box: dict[str, Any]) -> DeviceInfo:
-    """Return the device info of the storage box device."""
-    box_name = box.get("name") or storage_box_id
-    return DeviceInfo(
-        identifiers={(DOMAIN, str(storage_box_id))},
-        name=f"Storage Box {box_name}",
-        manufacturer="Hetzner",
-        model=(box.get("storage_box_type") or {}).get("name"),
-        configuration_url=CONFIGURATION_URL,
-    )
 
 
 @callback
@@ -91,12 +79,17 @@ class HetznerEntity(CoordinatorEntity[HetznerDataUpdateCoordinator]):
         return self._object_id_name
 
     @property
-    def device_info(self) -> DeviceInfo:
+    def device_info(self) -> DeviceInfo | ChildDeviceInfo:
         return storage_box_device_info(self._storage_box_id, self._box)
 
 
 class HetznerSubaccountEntity(HetznerEntity):
-    """Base entity grouping the entities of a subaccount under its own device."""
+    """Base entity grouping the entities of a subaccount under its own device.
+
+    The device is a child device of the box: a subaccount is a part of the
+    storage box (its own login, access settings and home directory on the
+    same box), not a device HA reaches through it.
+    """
 
     def __init__(
         self,
@@ -133,17 +126,12 @@ class HetznerSubaccountEntity(HetznerEntity):
         )
 
     @property
-    def device_info(self) -> DeviceInfo:
-        subaccount = self._subaccount
-        box_name = self._box.get("name") or self._storage_box_id
-        # The name is required by the API; fall back to the username anyway.
-        # The box name keeps entity_ids readable and apart from the box's own
-        # (binary_sensor.storage_box_backup_sub1_ssh vs ..._backup_ssh) and
-        # from equally named subaccounts of other boxes
-        name = (
-            subaccount.get("name") or subaccount.get("username") or self._subaccount_id
-        )
-        return DeviceInfo(
+    def device_info(self) -> ChildDeviceInfo:
+        # The parent's name comes first in entity names and entity_ids, which
+        # keeps them apart from the box's own (binary_sensor.storage_box_backup
+        # _sub1_ssh vs ..._backup_ssh) and from equally named subaccounts of
+        # other boxes
+        return ChildDeviceInfo(
             identifiers={
                 (
                     DOMAIN,
@@ -152,12 +140,9 @@ class HetznerSubaccountEntity(HetznerEntity):
                     ),
                 )
             },
-            name=f"Storage Box {box_name} {name}",
-            manufacturer="Hetzner",
-            model="Storage Box subaccount",
-            configuration_url=CONFIGURATION_URL,
+            name=subaccount_device_name(self._subaccount, self._subaccount_id),
             # Registered in __init__.async_setup_entry before the platforms
-            via_device_id=dr.async_get_device_id_by_identifier(
+            parent_device_id=dr.async_get_device_id_by_identifier(
                 self.coordinator.hass,
                 (DOMAIN, str(self._storage_box_id)),
                 config_entry_id=self.coordinator.config_entry.entry_id,

@@ -78,7 +78,7 @@ home-assistant/
 
 ### Prerequisites: Obtaining an API Key
 
-You need a Hetzner account with at least one Storage Box and an API key of the project that contains it.
+You need Home Assistant 2026.10 or newer, and a Hetzner account with at least one Storage Box and an API key of the project that contains it.
 To obtain one, sign in into the [Hetzner Console](https://console.hetzner.com) and choose a Project, go to Security → API Tokens, and generate a new token. Read access is enough. Make sure to copy the token because it won’t be shown to you again.
 
 ### Setup via Configuration Flow
@@ -173,7 +173,11 @@ One binary sensor per access setting of the Storage Box shows whether it is enab
 
 ## Subaccounts
 
-Every subaccount of the Storage Box gets its own device, linked to the Storage Box device ("connected via"), with the model "Storage Box subaccount". It is named "Storage Box &lt;boxname&gt; &lt;subaccount name&gt;" (the username if the subaccount has no name), for example "Storage Box backup sub1". Including the box name keeps the entity IDs apart from those of the box and of subaccounts of other boxes.
+Every subaccount of the Storage Box gets its own device. It is a child device of the Storage Box device, because a subaccount is a part of the box: it has its own login, access settings and home directory on the same box. The device is named after the subaccount (the username if the subaccount has no name), for example "sub1". Home Assistant puts the name of the Storage Box device in front of it in entity names and entity IDs, for example "Storage Box backup sub1 SSH", which keeps them apart from those of the box and of subaccounts of other boxes. If you give a subaccount device an area of its own, Home Assistant uses the area name there instead. A subaccount device without an area of its own is in the area of the Storage Box device, and disabling the Storage Box device disables its subaccount devices as well.
+
+Names changed in the Hetzner Console (of the box or a subaccount) and a changed box type are taken over with the next update; a name you gave a device yourself stays. Entity IDs do not change.
+
+Up to version 1.1, subaccount devices were separate devices "connected via" the Storage Box device and named "Storage Box &lt;boxname&gt; &lt;subaccount name&gt;". The update turns them into child devices: their device, entity IDs, history, areas, labels and names you gave them are kept. The device name becomes the subaccount name, so the `friendly_name` state attribute of their entities becomes for example "sub1 SSH" instead of "Storage Box backup sub1 SSH" unless you named the entity yourself. The devices no longer show a manufacturer, model or link to the Hetzner Console; these are on the Storage Box device.
 
 All subaccount entities are diagnostic entities. For a subaccount `sub1` of the box `backup`:
 

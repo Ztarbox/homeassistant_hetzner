@@ -9,6 +9,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import device_registry as dr, issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import (
@@ -23,6 +24,8 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 SCAN_INTERVAL = timedelta(seconds=600)  # update every 10 minutes
+
+CONFIGURATION_URL = "https://console.hetzner.com"
 
 # The coordinator is the only runtime data of a loaded entry
 type HetznerConfigEntry = ConfigEntry[HetznerDataUpdateCoordinator]
@@ -46,6 +49,28 @@ def storage_box_not_found_issue_id(entry_id: str) -> str:
 def subaccount_device_identifier(storage_box_id: str, subaccount_id: str) -> str:
     """Return the device identifier of a subaccount of a storage box."""
     return f"{storage_box_id}_subaccount_{subaccount_id}"
+
+
+def storage_box_device_info(storage_box_id: str, box: dict[str, Any]) -> DeviceInfo:
+    """Return the device info of the storage box device."""
+    box_name = box.get("name") or storage_box_id
+    return DeviceInfo(
+        identifiers={(DOMAIN, str(storage_box_id))},
+        name=f"Storage Box {box_name}",
+        manufacturer="Hetzner",
+        model=(box.get("storage_box_type") or {}).get("name"),
+        configuration_url=CONFIGURATION_URL,
+    )
+
+
+def subaccount_device_name(subaccount: dict[str, Any], subaccount_id: str) -> str:
+    """Return the name of a subaccount's child device.
+
+    HA puts the box device's name in front of it in entity names and
+    entity_ids. The name is required by the API; fall back to the username
+    anyway.
+    """
+    return subaccount.get("name") or subaccount.get("username") or subaccount_id
 
 
 def subaccount_ids_of_device(
@@ -147,24 +172,52 @@ class HetznerDataUpdateCoordinator(DataUpdateCoordinator[StorageBoxData]):
                 if isinstance(subaccount, dict) and subaccount.get("id") is not None
             },
         )
-        self._async_remove_stale_devices(data.subaccounts)
+        self._async_update_devices(data)
         return data
 
     @callback
-    def _async_remove_stale_devices(self, subaccounts: Iterable[str]) -> None:
-        """Remove the devices of subaccounts the API no longer lists.
+    def _async_update_devices(self, data: StorageBoxData) -> None:
+        """Keep the devices in step with the API.
 
-        Removing a device also removes its entities from the entity registry.
-        Only a successful update gets here, so an API error never removes one.
+        Entities only apply their device info when they are added, so names
+        and the box type changed in the Hetzner Console are updated here. A
+        name the user set (name_by_user) is a field of its own and stays.
+        Devices of subaccounts the API no longer lists are removed, which
+        also removes their entities. Only a successful update gets here, so
+        an API error never removes one.
         """
-        current = set(subaccounts)
         device_registry = dr.async_get(self.hass)
-        for device in dr.async_entries_for_config_entry(
-            device_registry, self.config_entry.entry_id
+        entry_id = self.config_entry.entry_id
+
+        # Registered by async_setup_entry after the first refresh
+        if box_device := device_registry.async_get_device_by_identifier(
+            (DOMAIN, str(self._storage_box_id)), entry_id
         ):
+            box_info = storage_box_device_info(self._storage_box_id, data.box)
+            device_registry.async_update_device(
+                box_device.id, name=box_info["name"], model=box_info["model"]
+            )
+
+        # Subaccount devices are child devices of the box; devices registered
+        # before 1.2 are main devices until their entities are added again
+        devices: list[dr.DeviceEntry | dr.ChildDeviceEntry] = [
+            *dr.async_entries_for_config_entry(device_registry, entry_id),
+            *dr.async_child_entries_for_config_entry(device_registry, entry_id),
+        ]
+        for device in devices:
             subaccount_ids = subaccount_ids_of_device(
                 device.identifiers, self._storage_box_id
             )
-            if subaccount_ids and not subaccount_ids & current:
-                _LOGGER.debug("Removing device %s of a deleted subaccount", device.name)
-                device_registry.async_remove_device(device.id)
+            if not subaccount_ids:
+                continue
+            if listed := sorted(subaccount_ids & set(data.subaccounts)):
+                if isinstance(device, dr.ChildDeviceEntry):
+                    device_registry.async_update_child_device(
+                        device.id,
+                        name=subaccount_device_name(
+                            data.subaccounts[listed[0]], listed[0]
+                        ),
+                    )
+                continue
+            _LOGGER.debug("Removing device %s of a deleted subaccount", device.name)
+            device_registry.async_remove_device(device.id)

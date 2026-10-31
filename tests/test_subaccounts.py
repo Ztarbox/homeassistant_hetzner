@@ -91,9 +91,15 @@ async def _tick(hass: HomeAssistant) -> None:
     await hass.async_block_till_done()
 
 
-def _devices(hass: HomeAssistant, entry: MockConfigEntry) -> list[dr.DeviceEntry]:
-    """Return the devices of the entry."""
-    return dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id)
+def _devices(
+    hass: HomeAssistant, entry: MockConfigEntry
+) -> list[dr.DeviceEntry | dr.ChildDeviceEntry]:
+    """Return the devices of the entry, child devices included."""
+    dev_reg = dr.async_get(hass)
+    return [
+        *dr.async_entries_for_config_entry(dev_reg, entry.entry_id),
+        *dr.async_child_entries_for_config_entry(dev_reg, entry.entry_id),
+    ]
 
 
 def _entities(hass: HomeAssistant, entry: MockConfigEntry) -> dict[str, str]:
@@ -104,9 +110,11 @@ def _entities(hass: HomeAssistant, entry: MockConfigEntry) -> dict[str, str]:
     }
 
 
-def _sub_device(hass: HomeAssistant, entry: MockConfigEntry) -> dr.DeviceEntry | None:
-    """Return the device of the fixture subaccount."""
-    return dr.async_get(hass).async_get_device_by_identifier(
+def _sub_device(
+    hass: HomeAssistant, entry: MockConfigEntry
+) -> dr.ChildDeviceEntry | None:
+    """Return the child device of the fixture subaccount."""
+    return dr.async_get(hass).async_get_child_device_by_identifier(
         SUB_IDENTIFIER, entry.entry_id
     )
 
@@ -127,7 +135,7 @@ async def test_subaccount_device_and_entities(
     storage_box: dict[str, Any],
     subaccount: dict[str, Any],
 ) -> None:
-    """Each subaccount is a device linked to the box with diagnostic entities."""
+    """Each subaccount is a child device of the box with diagnostic entities."""
     _mock_api(aioclient_mock, storage_box, [subaccount])
     await _setup(hass, config_entry)
 
@@ -137,11 +145,9 @@ async def test_subaccount_device_and_entities(
 
     device = _sub_device(hass, config_entry)
     assert device is not None
-    assert device.name == "Storage Box backup sub1"
-    assert device.manufacturer == "Hetzner"
-    assert device.model == "Storage Box subaccount"
-    assert device.configuration_url == "https://console.hetzner.com"
-    assert device.via_device_id == _box_device(hass, config_entry).id
+    # The box device's name is put in front of it in entity names and ids
+    assert device.name == "sub1"
+    assert device.parent_device_id == _box_device(hass, config_entry).id
     assert len(_devices(hass, config_entry)) == 2
 
     entities = _entities(hass, config_entry)
@@ -166,12 +172,18 @@ async def test_subaccount_device_and_entities(
         state = hass.states.get(f"{BINARY_PREFIX}_{suffix}")
         assert state is not None
         assert state.state == value, suffix
-        assert state.attributes["friendly_name"] == f"Storage Box backup sub1 {name}"
+        # The state's friendly_name leaves out the parent device's name
+        assert state.attributes["friendly_name"] == f"sub1 {name}"
+        reg_entry = ent_reg.async_get(f"{BINARY_PREFIX}_{suffix}")
+        assert reg_entry is not None
+        assert er.async_get_full_entity_name(hass, reg_entry) == (
+            f"Storage Box backup sub1 {name}"
+        )
 
     state = hass.states.get(f"{SENSOR_PREFIX}_home_directory")
     assert state is not None
     assert state.state == "backups/host01"
-    assert state.attributes["friendly_name"] == "Storage Box backup sub1 Home directory"
+    assert state.attributes["friendly_name"] == "sub1 Home directory"
     assert state.attributes["username"] == "u123456-sub1"
     assert state.attributes["server"] == "u123456-sub1.your-storagebox.de"
     assert state.attributes["description"] == "host01 backup"
@@ -205,30 +217,20 @@ async def test_subaccount_entity_ids_stay_english(
     assert SUBACCOUNT_ENTITIES.items() <= _entities(hass, config_entry).items()
     state = hass.states.get(f"{BINARY_PREFIX}_read_only")
     assert state is not None
-    assert state.attributes["friendly_name"] == (
-        f"Storage Box backup sub1 {readonly_name}"
-    )
+    assert state.attributes["friendly_name"] == f"sub1 {readonly_name}"
     state = hass.states.get(f"{SENSOR_PREFIX}_home_directory")
     assert state is not None
-    assert state.attributes["friendly_name"] == f"Storage Box backup sub1 {home_name}"
+    assert state.attributes["friendly_name"] == f"sub1 {home_name}"
 
 
 @pytest.mark.parametrize(
     ("changes", "device_name", "prefix"),
     [
-        (
-            {"name": ""},
-            "Storage Box backup u123456-sub1",
-            "storage_box_backup_u123456_sub1",
-        ),
-        (
-            {"name": None},
-            "Storage Box backup u123456-sub1",
-            "storage_box_backup_u123456_sub1",
-        ),
+        ({"name": ""}, "u123456-sub1", "storage_box_backup_u123456_sub1"),
+        ({"name": None}, "u123456-sub1", "storage_box_backup_u123456_sub1"),
         (
             {"name": None, "username": None},
-            f"Storage Box backup {SUBACCOUNT_ID}",
+            SUBACCOUNT_ID,
             f"storage_box_backup_{SUBACCOUNT_ID}",
         ),
     ],
@@ -261,14 +263,19 @@ async def test_subaccount_of_box_without_name(
     storage_box: dict[str, Any],
     subaccount: dict[str, Any],
 ) -> None:
-    """A box without a name names its subaccount devices after its id."""
+    """Entities of a box without a name get its id from the parent device."""
     storage_box["name"] = None
     _mock_api(aioclient_mock, storage_box, [subaccount])
     await _setup(hass, config_entry)
 
     device = _sub_device(hass, config_entry)
     assert device is not None
-    assert device.name == f"Storage Box {STORAGE_BOX_ID} sub1"
+    assert device.name == "sub1"
+    assert _box_device(hass, config_entry).name == f"Storage Box {STORAGE_BOX_ID}"
+    assert (
+        hass.states.get(f"binary_sensor.storage_box_{STORAGE_BOX_ID}_sub1_ssh")
+        is not None
+    )
 
 
 async def test_subaccount_missing_values_unknown(
@@ -358,7 +365,7 @@ async def test_new_subaccount_added_later(
 
     device = _sub_device(hass, config_entry)
     assert device is not None
-    assert device.via_device_id == _box_device(hass, config_entry).id
+    assert device.parent_device_id == _box_device(hass, config_entry).id
     assert SUBACCOUNT_ENTITIES.items() <= _entities(hass, config_entry).items()
     assert hass.states.get(f"{BINARY_PREFIX}_ssh").state == STATE_ON  # type: ignore[union-attr]
 
@@ -417,7 +424,8 @@ async def test_stale_device_removed_on_setup(
 ) -> None:
     """A subaccount deleted while HA was not running is removed on setup.
 
-    Devices of other identifiers in the entry are left alone.
+    Devices of other identifiers in the entry are left alone. The stale device
+    is a main device, as registered before subaccounts became child devices.
     """
     dev_reg = dr.async_get(hass)
     stale = dev_reg.async_get_or_create(
@@ -442,6 +450,147 @@ async def test_stale_device_removed_on_setup(
     assert er.async_get(hass).async_get(stale_entity.entity_id) is None
     assert dev_reg.async_get(foreign.id) is not None
     assert _box_device(hass, config_entry) is not None
+
+
+async def test_stale_child_device_removed(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    storage_box: dict[str, Any],
+    subaccount: dict[str, Any],
+) -> None:
+    """A child device of a subaccount the API does not list is removed."""
+    _mock_api(aioclient_mock, storage_box, [subaccount])
+    await _setup(hass, config_entry)
+    dev_reg = dr.async_get(hass)
+    stale = dev_reg.async_get_or_create_child(
+        config_entry_id=config_entry.entry_id,
+        identifiers={(DOMAIN, subaccount_device_identifier(STORAGE_BOX_ID, "7"))},
+        name="gone",
+        parent_device_id=_box_device(hass, config_entry).id,
+    )
+
+    await _tick(hass)
+
+    assert dev_reg.async_get(stale.id) is None
+    assert _sub_device(hass, config_entry) is not None
+
+
+async def test_device_names_follow_the_api(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    storage_box: dict[str, Any],
+    subaccount: dict[str, Any],
+) -> None:
+    """Names and the box type changed in the Hetzner Console are updated.
+
+    Names the user gave the devices stay; entity_ids do not change.
+    """
+    _mock_api(aioclient_mock, storage_box, [subaccount])
+    await _setup(hass, config_entry)
+    dev_reg = dr.async_get(hass)
+    box = _box_device(hass, config_entry)
+    sub = _sub_device(hass, config_entry)
+    assert sub is not None
+
+    storage_box["name"] = "archive"
+    storage_box["storage_box_type"]["name"] = "bx21"
+    subaccount["name"] = "host02"
+    _mock_api(aioclient_mock, storage_box, [subaccount])
+    await _tick(hass)
+
+    box = _box_device(hass, config_entry)
+    assert box.name == "Storage Box archive"
+    assert box.model == "bx21"
+    sub = _sub_device(hass, config_entry)
+    assert sub is not None
+    assert sub.name == "host02"
+    reg_entry = er.async_get(hass).async_get(f"{BINARY_PREFIX}_ssh")
+    assert reg_entry is not None
+    assert er.async_get_full_entity_name(hass, reg_entry) == (
+        "Storage Box archive host02 SSH"
+    )
+
+    dev_reg.async_update_device(box.id, name_by_user="My box")
+    dev_reg.async_update_child_device(sub.id, name_by_user="My sub")
+    subaccount["name"] = "host03"
+    _mock_api(aioclient_mock, storage_box, [subaccount])
+    await _tick(hass)
+
+    box = _box_device(hass, config_entry)
+    assert (box.name, box.name_by_user) == ("Storage Box archive", "My box")
+    sub = _sub_device(hass, config_entry)
+    assert sub is not None
+    assert (sub.name, sub.name_by_user) == ("host03", "My sub")
+
+
+async def test_main_subaccount_device_becomes_child(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    storage_box: dict[str, Any],
+    subaccount: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A subaccount device of an earlier version keeps its id and user settings.
+
+    Up to 1.1 subaccounts were main devices linked with via_device_id.
+    """
+    dev_reg = dr.async_get(hass)
+    ent_reg = er.async_get(hass)
+    box = dev_reg.async_get_or_create(
+        config_entry_id=config_entry.entry_id,
+        identifiers={(DOMAIN, STORAGE_BOX_ID)},
+        name="Storage Box backup",
+    )
+    legacy = dev_reg.async_get_or_create(
+        config_entry_id=config_entry.entry_id,
+        identifiers={SUB_IDENTIFIER},
+        name="Storage Box backup sub1",
+        manufacturer="Hetzner",
+        model="Storage Box subaccount",
+        via_device_id=box.id,
+    )
+    dev_reg.async_update_device(
+        legacy.id, name_by_user="My sub", area_id="office", labels={"backup"}
+    )
+    # Registered by an earlier version under the same entity_ids
+    for entity_id, unique_id in SUBACCOUNT_ENTITIES.items():
+        domain, object_id = entity_id.split(".")
+        ent_reg.async_get_or_create(
+            domain,
+            DOMAIN,
+            unique_id,
+            config_entry=config_entry,
+            device_id=legacy.id,
+            suggested_object_id=object_id,
+        )
+    # As after a restart: the registrations above belong to no running setup
+    dev_reg.async_config_entry_unloaded(config_entry.entry_id)
+
+    _mock_api(aioclient_mock, storage_box, [subaccount])
+    await _setup(hass, config_entry)
+
+    device = _sub_device(hass, config_entry)
+    assert device is not None
+    assert device.id == legacy.id
+    assert device.parent_device_id == box.id
+    assert device.name == "sub1"
+    assert device.name_by_user == "My sub"
+    assert device.area_id == "office"
+    assert device.labels == {"backup"}
+    assert (
+        dev_reg.async_get_device_by_identifier(SUB_IDENTIFIER, config_entry.entry_id)
+        is None
+    )
+    assert SUBACCOUNT_ENTITIES.items() <= _entities(hass, config_entry).items()
+    for entity_id in SUBACCOUNT_ENTITIES:
+        reg_entry = ent_reg.async_get(entity_id)
+        assert reg_entry is not None
+        assert reg_entry.device_id == legacy.id, entity_id
+        assert hass.states.get(entity_id) is not None, entity_id
+    assert "error adding device" not in caplog.text
 
 
 async def test_api_error_keeps_subaccounts(
