@@ -68,13 +68,13 @@ def _error_key(err: Exception, storage_box_id: str | None = None) -> str:
         return "connection_timeout"
     if isinstance(err, HetznerConnectionError):
         _LOGGER.debug("Error connecting to Hetzner API: %s", err)
-        return "validation_error"
+        return "cannot_connect"
     if isinstance(err, HetznerApiError):
         _LOGGER.debug("Unexpected response from Hetzner API: %s", err)
         return "api_error"
     # Unexpected, so keep the traceback visible
     _LOGGER.error("Unexpected error calling the Hetzner API", exc_info=err)
-    return "validation_error"
+    return "unknown"
 
 
 # Field key used for storage box selection; using the config constant

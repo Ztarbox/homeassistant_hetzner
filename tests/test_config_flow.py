@@ -170,8 +170,8 @@ async def test_user_step_api_key_required(
         ({"status": 429}, "api_error"),
         ({"status": 500}, "api_error"),
         ({"exc": asyncio.TimeoutError()}, "connection_timeout"),
-        ({"exc": aiohttp.ClientError("boom")}, "validation_error"),
-        ({"exc": ValueError("boom")}, "validation_error"),
+        ({"exc": aiohttp.ClientError("boom")}, "cannot_connect"),
+        ({"exc": ValueError("boom")}, "unknown"),
     ],
 )
 async def test_user_step_validation_errors(
@@ -342,8 +342,8 @@ async def test_storage_box_without_name_uses_id_in_title(
         ({"status": 404}, "invalid_host"),
         ({"text": "not json"}, "api_error"),
         ({"exc": asyncio.TimeoutError()}, "connection_timeout"),
-        ({"exc": aiohttp.ClientError("boom")}, "validation_error"),
-        ({"exc": ValueError("boom")}, "validation_error"),
+        ({"exc": aiohttp.ClientError("boom")}, "cannot_connect"),
+        ({"exc": ValueError("boom")}, "unknown"),
     ],
 )
 async def test_storage_box_step_list_errors(
@@ -690,7 +690,7 @@ async def test_no_options_flow(
         ("new-key", {"status": 404}, "storage_box_not_found"),
         ("new-key", {"status": 500}, "api_error"),
         ("new-key", {"exc": asyncio.TimeoutError()}, "connection_timeout"),
-        ("new-key", {"exc": aiohttp.ClientError("boom")}, "validation_error"),
+        ("new-key", {"exc": aiohttp.ClientError("boom")}, "cannot_connect"),
     ],
 )
 @pytest.mark.parametrize("flow", KEY_FLOWS)

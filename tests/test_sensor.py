@@ -62,6 +62,10 @@ PREFIX = "sensor.storage_box_backup"
 BINARY_PREFIX = "binary_sensor.storage_box_backup"
 UID = f"hetzner_storage_box_{STORAGE_BOX_ID}"
 
+# The tests read the states of the protocol sensors, which are disabled by
+# default (checked in test_init.py)
+pytestmark = pytest.mark.usefixtures("entity_registry_enabled_by_default")
+
 # entity_id -> unique_id of the binary sensors, one per access setting
 BINARY_ENTITIES = {
     f"{BINARY_PREFIX}_reachable_externally": f"{UID}_reachable_externally",

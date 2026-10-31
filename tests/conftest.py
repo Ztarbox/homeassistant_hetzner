@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Generator
 import copy
 from typing import Any
+from unittest.mock import PropertyMock, patch
 
 from homeassistant.const import CONF_API_KEY, CONF_HOST
 import pytest
@@ -98,6 +99,17 @@ def auto_enable_custom_integrations(
 ) -> Generator[None]:
     """Enable loading the custom integration in every test."""
     yield
+
+
+@pytest.fixture
+def entity_registry_enabled_by_default() -> Generator[None]:
+    """Register every entity as enabled, also those disabled by default."""
+    with patch(
+        "homeassistant.helpers.entity.Entity.entity_registry_enabled_default",
+        return_value=True,
+        new_callable=PropertyMock,
+    ):
+        yield
 
 
 @pytest.fixture

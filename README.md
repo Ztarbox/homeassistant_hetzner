@@ -161,7 +161,7 @@ The attributes of the status, location and home directory sensors are details th
 
 ## Binary Sensors
 
-One binary sensor per access setting of the Storage Box shows whether it is enabled (`on`) or disabled (`off`). These are the settings of the Storage Box's main account, so their names end with "(main account)" (the entity IDs leave this out). The access settings of subaccounts are covered by their own devices, see [Subaccounts](#subaccounts). The binary sensors are diagnostic entities, so they appear under **Diagnostic** on the device page. A setting the API does not report shows as unknown.
+One binary sensor per access setting of the Storage Box shows whether it is enabled (`on`) or disabled (`off`). These are the settings of the Storage Box's main account, so their names end with "(main account)" (the entity IDs leave this out). The access settings of subaccounts are covered by their own devices, see [Subaccounts](#subaccounts). The binary sensors are diagnostic entities, so they appear under **Diagnostic** on the device page. Except for *Reachable externally*, they are disabled by default; enable them there if you need them (entities created by earlier versions stay enabled). A setting the API does not report shows as unknown.
 
 | Entity ID | Shows whether |
 | --- | --- |
@@ -179,7 +179,7 @@ Names changed in the Hetzner Console (of the box or a subaccount) and a changed 
 
 Up to version 1.1, subaccount devices were separate devices "connected via" the Storage Box device and named "Storage Box &lt;boxname&gt; &lt;subaccount name&gt;". The update turns them into child devices: their device, entity IDs, history, areas, labels and names you gave them are kept. The device name becomes the subaccount name, so the `friendly_name` state attribute of their entities becomes for example "sub1 SSH" instead of "Storage Box backup sub1 SSH" unless you named the entity yourself. The devices no longer show a manufacturer, model or link to the Hetzner Console; these are on the Storage Box device.
 
-All subaccount entities are diagnostic entities. For a subaccount `sub1` of the box `backup`:
+All subaccount entities are diagnostic entities. The SSH, Samba and WebDAV binary sensors are disabled by default, so that boxes with many subaccounts do not get flooded with entities; enable them on the device page under **Diagnostic** if you need them (entities created by earlier versions stay enabled). For a subaccount `sub1` of the box `backup`:
 
 | Entity ID | Shows |
 | --- | --- |

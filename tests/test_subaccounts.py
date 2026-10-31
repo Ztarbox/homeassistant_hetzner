@@ -64,6 +64,10 @@ SUBACCOUNT_ENTITIES = {
 # Entities of the storage box itself
 BOX_ENTITY_COUNT = 12
 
+# The tests read the states of the protocol sensors, which are disabled by
+# default (checked in test_init.py)
+pytestmark = pytest.mark.usefixtures("entity_registry_enabled_by_default")
+
 
 def _mock_api(
     aioclient_mock: AiohttpClientMocker,

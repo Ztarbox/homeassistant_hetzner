@@ -55,7 +55,8 @@
       "invalid_api_key": "Ungültiger API-Schlüssel",
       "connection_timeout": "Zeitüberschreitung bei der Verbindung",
       "api_error": "API-Fehler",
-      "validation_error": "Validierungsfehler",
+      "cannot_connect": "Verbindung zur Hetzner API fehlgeschlagen",
+      "unknown": "Unerwarteter Fehler, Details findest du im Home Assistant Protokoll",
       "invalid_host": "Hetzner-API-Endpunkt nicht gefunden",
       "storage_box_not_found": "Dieser API-Token hat keinen Zugriff auf die konfigurierte Storage Box"
     }

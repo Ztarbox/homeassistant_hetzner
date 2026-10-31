@@ -28,30 +28,34 @@ ACCESS_SETTINGS: tuple[BinarySensorEntityDescription, ...] = tuple(
         key=key,
         translation_key=translation_key,
         entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=enabled_default,
     )
-    for key, translation_key in (
-        ("reachable_externally", "reachable_externally"),
-        ("samba_enabled", "samba"),
-        ("ssh_enabled", "ssh"),
-        ("webdav_enabled", "webdav"),
-        ("zfs_enabled", "zfs_snapshot_folder"),
+    for key, translation_key, enabled_default in (
+        ("reachable_externally", "reachable_externally", True),
+        ("samba_enabled", "samba", False),
+        ("ssh_enabled", "ssh", False),
+        ("webdav_enabled", "webdav", False),
+        ("zfs_enabled", "zfs_snapshot_folder", False),
     )
 )
 
 # The access settings of each subaccount; the key is the API field and the end
-# of the unique_id like above. Own translation keys: no "(main account)" suffix
+# of the unique_id like above. Own translation keys: no "(main account)" suffix.
+# The protocols are disabled by default: with many subaccounts they add up, and
+# only new registry entries are affected, existing ones stay enabled
 SUBACCOUNT_ACCESS_SETTINGS: tuple[BinarySensorEntityDescription, ...] = tuple(
     BinarySensorEntityDescription(
         key=key,
         translation_key=translation_key,
         entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=enabled_default,
     )
-    for key, translation_key in (
-        ("reachable_externally", "subaccount_reachable_externally"),
-        ("samba_enabled", "subaccount_samba"),
-        ("ssh_enabled", "subaccount_ssh"),
-        ("webdav_enabled", "subaccount_webdav"),
-        ("readonly", "readonly"),
+    for key, translation_key, enabled_default in (
+        ("reachable_externally", "subaccount_reachable_externally", True),
+        ("samba_enabled", "subaccount_samba", False),
+        ("ssh_enabled", "subaccount_ssh", False),
+        ("webdav_enabled", "subaccount_webdav", False),
+        ("readonly", "readonly", True),
     )
 )
 

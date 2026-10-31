@@ -591,3 +591,44 @@ async def test_remove_entry_without_issue(
         )
         is None
     )
+
+
+async def test_protocol_sensors_disabled_by_default(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    storage_box: dict[str, Any],
+    subaccount: dict[str, Any],
+) -> None:
+    """The protocol and ZFS binary sensors are registered disabled."""
+    aioclient_mock.get(BOX_URL, json={"storage_box": storage_box})
+    aioclient_mock.get(SUBACCOUNTS_URL, json={"subaccounts": [subaccount]})
+    await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    ent_reg = er.async_get(hass)
+    box = "binary_sensor.storage_box_backup"
+    sub = f"{box}_sub1"
+    for entity_id, enabled in (
+        (f"{box}_reachable_externally", True),
+        (f"{box}_samba", False),
+        (f"{box}_ssh", False),
+        (f"{box}_webdav", False),
+        (f"{box}_zfs_snapshot_folder", False),
+        (f"{sub}_reachable_externally", True),
+        (f"{sub}_samba", False),
+        (f"{sub}_ssh", False),
+        (f"{sub}_webdav", False),
+        (f"{sub}_read_only", True),
+        ("sensor.storage_box_backup", True),
+        ("sensor.storage_box_backup_free_space", True),
+        ("sensor.storage_box_backup_sub1_home_directory", True),
+    ):
+        reg_entry = ent_reg.async_get(entity_id)
+        assert reg_entry is not None, entity_id
+        if enabled:
+            assert reg_entry.disabled_by is None, entity_id
+            assert hass.states.get(entity_id) is not None, entity_id
+        else:
+            assert reg_entry.disabled_by is er.RegistryEntryDisabler.INTEGRATION
+            assert hass.states.get(entity_id) is None, entity_id
