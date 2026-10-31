@@ -31,7 +31,7 @@
 ## Description
 **Hetzner Storage Box**  
 
-Home Assistant custom component that exposes storage metrics for your [Hetzner Storage Box](https://www.hetzner.com/storage/storage-box/) via the official JSON API.  
+Home Assistant custom component that exposes storage metrics for your [Hetzner Storage Box](https://www.hetzner.com/storage/storage-box/) via the official [Hetzner API](https://docs.hetzner.cloud/reference/hetzner) (`https://api.hetzner.com/v1`).  
 Track **total, used, free, data and snapshot sizes** as native data size sensors (shown in GiB by default, any other unit can be picked per sensor), plus a status sensor that shows the box state and enriches it with details such as type, creation date and server name. Also a `location` sensor is available to show details of where your data is stored, and binary sensors show which access methods (SSH, Samba, WebDAV, external reachability, ZFS snapshot folder) are enabled for the main account. Each [subaccount](#subaccounts) of the box gets its own device with its access settings and home directory.
 Perfect for monitoring your off-site backup space and add it to dashboards, automations and long-term statistics.
 
@@ -194,7 +194,7 @@ Subaccounts are picked up automatically: one created in the Hetzner Console appe
 
 ## Update Interval
 
-All sensors are automatically updated every 10 minutes to fetch the latest status of your Storage Box. Each update makes two API requests (the Storage Box and its subaccounts), well within the default Hetzner API limit of 3,600 requests per hour and project.
+All sensors are automatically updated every 10 minutes to fetch the latest status of your Storage Box. Each update makes two read-only API requests, `GET /v1/storage_boxes/{id}` and `GET /v1/storage_boxes/{id}/subaccounts` (see the sections *Storage Boxes* and *Storage Box Subaccounts* of the [Hetzner API reference](https://docs.hetzner.cloud/reference/hetzner)), well within the default Hetzner API limit of 3,600 requests per hour and project.
 
 ## Troubleshooting
 
