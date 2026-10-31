@@ -209,6 +209,10 @@ If the Hetzner API answers that the Storage Box was not found, the box was delet
 
 Network errors, server errors, rate limits and Hetzner maintenance make the sensors unavailable until the next successful update; Home Assistant keeps retrying on its own. Only a rejected API token (HTTP 401, or 403 for missing permissions) asks for a new API key.
 
+### Diagnostics
+
+When reporting an issue, attach the diagnostics of the integration entry: open the three-dot menu of the Storage Box under **Settings** > **Devices & Services** > **Hetzner Storage Box** and select **Download diagnostics**. The file contains the entry's configuration and the Storage Box and subaccount data of the last update, as returned by the Hetzner API. The API token, usernames, server names (both contain your Hetzner customer number) and location coordinates are replaced by `**REDACTED**`; check the file before posting it publicly, for example for names, descriptions or labels you would rather not share.
+
 ## Removing the Integration
 
 1. In Home Assistant, navigate to **Settings** > **Devices & Services** > **Hetzner Storage Box**
