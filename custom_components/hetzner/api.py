@@ -71,12 +71,13 @@ class HetznerClient:
             data = await self._async_get(
                 "storage_boxes", {"page": page, "per_page": LIST_PAGE_SIZE}
             )
-            boxes = _dict_items(data.get("storage_boxes"))
-            storage_boxes.extend(boxes)
+            page_items = data.get("storage_boxes")
+            storage_boxes.extend(_dict_items(page_items))
             next_page = _next_page(data)
-            # An empty page (or one without usable boxes) or a next_page not
-            # after this one would never end
-            if not boxes or next_page is None or next_page <= page:
+            # An empty page or a next_page not after this one would never end.
+            # A page of only malformed elements is not empty: the next one
+            # may still hold boxes.
+            if not page_items or next_page is None or next_page <= page:
                 return storage_boxes
             page = next_page
 

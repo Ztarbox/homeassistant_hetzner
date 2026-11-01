@@ -59,7 +59,7 @@ async def test_list_storage_boxes(
     assert headers == {"Authorization": f"Bearer {API_KEY}"}
 
 
-def _page(boxes: list[dict[str, Any]], next_page: Any) -> dict[str, Any]:
+def _page(boxes: list[Any], next_page: Any) -> dict[str, Any]:
     """Return one page of the storage box list."""
     return {
         "storage_boxes": boxes,
@@ -134,6 +134,20 @@ async def test_list_storage_boxes_empty_page(
     aioclient_mock.get(_page_url(2), json=_page([], 3))
 
     assert await _client(hass).async_list_storage_boxes() == [storage_box]
+    assert aioclient_mock.call_count == 2
+
+
+async def test_list_storage_boxes_malformed_page(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    storage_box: dict[str, Any],
+) -> None:
+    """A page of only malformed elements does not end the list."""
+    second = {**storage_box, "id": 2}
+    aioclient_mock.get(_page_url(1), json=_page([None, "box"], 2))
+    aioclient_mock.get(_page_url(2), json=_page([second], None))
+
+    assert await _client(hass).async_list_storage_boxes() == [second]
     assert aioclient_mock.call_count == 2
 
 
